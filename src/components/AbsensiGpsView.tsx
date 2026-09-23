@@ -100,10 +100,13 @@ export const AbsensiGpsView: React.FC<AbsensiGpsViewProps> = ({ onNavigate }) =>
       showToast('Presensi Pagi berhasil dicatat! Mengalihkan ke To-Do List...', 'success');
     }
 
-    // Otomatis mengarahkan ke pengisian To-Do List
+    // Otomatis mengarahkan ke pengisian To-Do List. Delay dipersingkat & TETAP dijalankan
+    // meski Google Meet dibuka di tab baru — supaya begitu fokus kembali ke tab aplikasi ini,
+    // karyawan sudah langsung berada di halaman To-Do List, bukan tertinggal di halaman Absensi
+    // (karyawan mudah lupa isi To-Do kalau fokusnya keburu pindah ke tab Meet).
     setTimeout(() => {
       onNavigate?.('todo-saya');
-    }, 1200);
+    }, 400);
   };
 
   const handleAbsenSiangClick = () => {
@@ -129,9 +132,11 @@ export const AbsensiGpsView: React.FC<AbsensiGpsViewProps> = ({ onNavigate }) =>
 
     // Otomatis mengarahkan ke To-Do List supaya karyawan langsung centang tugas yang
     // sudah dikerjakan sekaligus melampirkan bukti (link/foto) sebelum jam kerja berakhir.
+    // Delay dipersingkat & TETAP dijalankan meski Google Meet dibuka di tab baru — supaya
+    // tab aplikasi ini sudah menampilkan To-Do List begitu karyawan kembali dari tab Meet.
     setTimeout(() => {
       onNavigate?.('todo-saya');
-    }, 1200);
+    }, 400);
   };
 
   return (
