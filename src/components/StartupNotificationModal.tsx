@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { AlertTriangle, Video, MapPin, CheckCheck, X, Clock, ArrowRight, Sun, Sunset } from 'lucide-react';
+import { AlertTriangle, Video, MapPin, CheckCheck, X, Clock, ArrowRight, Sun, Sunset, ListChecks } from 'lucide-react';
 import { SidebarMenuId } from './Sidebar';
 import { ZoomMeetingInfo } from '../types';
 
@@ -8,7 +8,7 @@ interface StartupNotificationModalProps {
   onNavigate: (menu: SidebarMenuId) => void;
 }
 
-type Step = 'teguran' | 'zoom-pagi' | 'zoom-siang' | null;
+type Step = 'teguran' | 'zoom-pagi' | 'zoom-siang' | 'todo-pagi' | 'todo-siang' | null;
 
 /**
  * Popup yang muncul di awal (begitu karyawan login / membuka aplikasi) untuk:
@@ -19,7 +19,7 @@ type Step = 'teguran' | 'zoom-pagi' | 'zoom-siang' | null;
  * Hanya berlaku untuk role karyawan, dan hanya tampil sekali per sesi login (per tanggal berjalan).
  */
 export const StartupNotificationModal: React.FC<StartupNotificationModalProps> = ({ onNavigate }) => {
-  const { currentUser, warnings, zoomMeetings, entries, selectedDate, markWarningRead } = useApp();
+  const { currentUser, warnings, zoomMeetings, entries, selectedDate, markWarningRead, wfaSettings } = useApp();
 
   const [step, setStep] = useState<Step>(null);
 
@@ -62,6 +62,18 @@ export const StartupNotificationModal: React.FC<StartupNotificationModalProps> =
     ? `wfa_startup_notif_seen_${currentUser.id}_${siangMeeting.id}`
     : '';
 
+  // Pengingat To-Do List — supaya karyawan yang absen lalu langsung "kabur" ke tab Google Meet
+  // (fokus teralihkan) tidak lupa mengisi/mencentang To-Do List-nya. Hanya dipicu di hari yang
+  // memang ada jadwal Meet, sesuai laporan: risiko lupa isi to-do paling besar justru saat ada
+  // meeting yang menyita perhatian.
+  const totalTodosToday = myTodayEntry?.totalTodos ?? 0;
+  const completedTodosToday = myTodayEntry?.completedTodos ?? 0;
+  const minTodos = wfaSettings.minTodosPerDay || 3;
+  const belumIsiTodoPagi = pagiMeeting && hasAbsenPagi && totalTodosToday < minTodos;
+  const belumCentangTodoSiang = siangMeeting && hasAbsenSiang && totalTodosToday > 0 && completedTodosToday === 0;
+  const storageKeyTodoPagi = `wfa_startup_notif_seen_todo-pagi_${currentUser.id}_${selectedDate}`;
+  const storageKeyTodoSiang = `wfa_startup_notif_seen_todo-siang_${currentUser.id}_${selectedDate}`;
+
   const hasSeen = (key: string) => {
     if (!key) return false;
     try {
@@ -83,6 +95,8 @@ export const StartupNotificationModal: React.FC<StartupNotificationModalProps> =
   const resolveNextStep = (): Step => {
     if (pagiMeeting && !hasAbsenPagi && !hasSeen(storageKeyPagi)) return 'zoom-pagi';
     if (siangMeeting && !hasAbsenSiang && !hasSeen(storageKeySiang)) return 'zoom-siang';
+    if (belumIsiTodoPagi && !hasSeen(storageKeyTodoPagi)) return 'todo-pagi';
+    if (belumCentangTodoSiang && !hasSeen(storageKeyTodoSiang)) return 'todo-siang';
     return null;
   };
 
@@ -109,6 +123,8 @@ export const StartupNotificationModal: React.FC<StartupNotificationModalProps> =
     siangMeeting?.id,
     hasAbsenPagi,
     hasAbsenSiang,
+    belumIsiTodoPagi,
+    belumCentangTodoSiang,
   ]);
 
   const handleReadAllWarnings = () => {
@@ -136,6 +152,28 @@ export const StartupNotificationModal: React.FC<StartupNotificationModalProps> =
     markSeen(storageKeySiang);
     setStep(null);
     onNavigate('absensi-gps');
+  };
+
+  const handleCloseTodoPagi = () => {
+    markSeen(storageKeyTodoPagi);
+    setStep(resolveNextStep());
+  };
+
+  const handleGoTodoPagi = () => {
+    markSeen(storageKeyTodoPagi);
+    setStep(null);
+    onNavigate('todo-saya');
+  };
+
+  const handleCloseTodoSiang = () => {
+    markSeen(storageKeyTodoSiang);
+    setStep(null);
+  };
+
+  const handleGoTodoSiang = () => {
+    markSeen(storageKeyTodoSiang);
+    setStep(null);
+    onNavigate('todo-saya');
   };
 
   if (currentUser.role !== 'karyawan' || step === null) return null;
@@ -296,6 +334,101 @@ export const StartupNotificationModal: React.FC<StartupNotificationModalProps> =
               className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs transition-colors shadow-sm"
             >
               <span>Absen Siang Sekarang</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {step === 'todo-pagi' && pagiMeeting && (
+        <div className="relative max-w-md w-full bg-white rounded-2xl shadow-2xl overflow-hidden border border-emerald-200">
+          <button
+            onClick={handleCloseTodoPagi}
+            className="absolute top-3 right-3 p-1.5 rounded-lg text-white/80 hover:text-white hover:bg-white/10 z-10"
+          >
+            <X className="w-4 h-4" />
+          </button>
+
+          <div className="bg-gradient-to-r from-emerald-600 to-emerald-500 px-5 py-4 text-white flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-white/15 flex items-center justify-center shrink-0">
+              <ListChecks className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="font-extrabold text-sm">Jangan Lupa Isi To-Do List Pagi</h3>
+              <p className="text-[11px] text-emerald-100/90 mt-0.5">Sebelum lanjut ke Google Meet</p>
+            </div>
+          </div>
+
+          <div className="p-5 space-y-3">
+            <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 flex items-start gap-2.5">
+              <ListChecks className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-800 leading-relaxed">
+                Anda baru absen pagi & ada jadwal Google Meet hari ini, tapi rencana To-Do List Anda baru{' '}
+                <strong>{totalTodosToday} dari minimal {minTodos} tugas</strong>. Isi dulu sebelum masuk meeting
+                supaya tidak lupa setelahnya.
+              </p>
+            </div>
+          </div>
+
+          <div className="p-4 border-t border-slate-100 bg-slate-50/70 flex items-center gap-2">
+            <button
+              onClick={handleCloseTodoPagi}
+              className="px-4 py-3 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 font-bold text-xs transition-colors"
+            >
+              Nanti Saja
+            </button>
+            <button
+              onClick={handleGoTodoPagi}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-colors shadow-sm"
+            >
+              <span>Isi To-Do List Sekarang</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {step === 'todo-siang' && siangMeeting && (
+        <div className="relative max-w-md w-full bg-white rounded-2xl shadow-2xl overflow-hidden border border-emerald-200">
+          <button
+            onClick={handleCloseTodoSiang}
+            className="absolute top-3 right-3 p-1.5 rounded-lg text-white/80 hover:text-white hover:bg-white/10 z-10"
+          >
+            <X className="w-4 h-4" />
+          </button>
+
+          <div className="bg-gradient-to-r from-emerald-600 to-emerald-500 px-5 py-4 text-white flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-white/15 flex items-center justify-center shrink-0">
+              <ListChecks className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="font-extrabold text-sm">Jangan Lupa Centang To-Do List</h3>
+              <p className="text-[11px] text-emerald-100/90 mt-0.5">Sebelum lanjut ke Google Meet</p>
+            </div>
+          </div>
+
+          <div className="p-5 space-y-3">
+            <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 flex items-start gap-2.5">
+              <ListChecks className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-800 leading-relaxed">
+                Anda baru absen siang & ada jadwal Google Meet hari ini, tapi belum ada satu pun tugas yang
+                dicentang & dilampirkan buktinya. Centang dulu tugas yang sudah selesai sebelum masuk meeting.
+              </p>
+            </div>
+          </div>
+
+          <div className="p-4 border-t border-slate-100 bg-slate-50/70 flex items-center gap-2">
+            <button
+              onClick={handleCloseTodoSiang}
+              className="px-4 py-3 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 font-bold text-xs transition-colors"
+            >
+              Nanti Saja
+            </button>
+            <button
+              onClick={handleGoTodoSiang}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-colors shadow-sm"
+            >
+              <span>Centang To-Do List Sekarang</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </div>
