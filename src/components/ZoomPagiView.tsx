@@ -42,9 +42,24 @@ export const ZoomPagiView: React.FC = () => {
     wfaSettings
   } = useApp();
 
+  // Meeting aktif milik koordinator ini untuk HARI INI, per sesi — dipakai untuk auto-pilih
+  // tab yang belum dibuat & memperingatkan sebelum bikin jadwal ganda di sesi yang sama
+  // (mis. lupa pindah tab ke "Siang" padahal sudah ada jadwal "Pagi" hari itu).
+  const todaysActivePagi = zoomMeetings.find(
+    (m) => m.leaderId === currentUser.id && m.date === selectedDate && m.status === 'aktif' && m.session === 'pagi'
+  );
+  const todaysActiveSiang = zoomMeetings.find(
+    (m) => m.leaderId === currentUser.id && m.date === selectedDate && m.status === 'aktif' && m.session === 'siang'
+  );
+
   // Form State
   const [title, setTitle] = useState('');
-  const [session, setSession] = useState<'pagi' | 'siang'>('pagi');
+  // Kalau Meet Pagi hari ini sudah dijadwalkan tapi Siang belum, langsung arahkan tab ke
+  // "Siang" supaya tidak lagi kejadian jadwal siang malah tersimpan sebagai "Pagi" (tab
+  // lupa dipindah karena defaultnya selalu "Pagi").
+  const [session, setSession] = useState<'pagi' | 'siang'>(() =>
+    todaysActivePagi && !todaysActiveSiang ? 'siang' : 'pagi'
+  );
   const [duration, setDuration] = useState<number>(60);
   const [date, setDate] = useState<string>(selectedDate || '2026-09-17');
   const [time, setTime] = useState<string>('08:00');
@@ -90,6 +105,19 @@ export const ZoomPagiView: React.FC = () => {
     if (!meetLink.trim()) {
       showToast('Tempel link Google Meet Anda dulu di kolom atas', 'warning');
       return;
+    }
+
+    // Jaga-jaga terakhir: kalau sesi yang dipilih ternyata sudah ada jadwal aktif hari ini,
+    // minta konfirmasi dulu supaya tidak tidak sengaja bikin jadwal ganda di sesi yang sama
+    // (kasus paling sering: maksudnya bikin jadwal Siang, tapi tab masih di "Pagi").
+    const duplicateInSameSession = session === 'pagi' ? todaysActivePagi : todaysActiveSiang;
+    if (duplicateInSameSession) {
+      const confirmed = window.confirm(
+        `Anda sudah punya jadwal Meet ${session === 'pagi' ? 'Pagi' : 'Siang/Sore'} hari ini pukul ${duplicateInSameSession.time} WIB.\n\n` +
+          `Tetap buat SATU LAGI di sesi ${session === 'pagi' ? 'Pagi' : 'Siang/Sore'} yang sama?\n\n` +
+          `Klik Batal kalau maksud Anda sebenarnya untuk sesi ${session === 'pagi' ? 'Siang/Sore' : 'Pagi'} — lalu pilih tab yang benar dulu.`
+      );
+      if (!confirmed) return;
     }
 
     createZoomMeeting({
@@ -320,6 +348,22 @@ export const ZoomPagiView: React.FC = () => {
                 <span>Meet Siang / Sore</span>
               </button>
             </div>
+
+            {/* Peringatan: sesi yang sedang dipilih ternyata SUDAH ada jadwal aktif hari ini —
+                supaya koordinator sadar sebelum tidak sengaja bikin jadwal ganda di sesi yang
+                sama (dan lupa memang maksudnya untuk sesi yang satunya lagi). */}
+            {((session === 'pagi' && todaysActivePagi) || (session === 'siang' && todaysActiveSiang)) && (
+              <div className="mt-2 flex items-start gap-2 p-3 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-800 leading-relaxed">
+                <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                <span>
+                  Anda sudah punya jadwal <strong>{session === 'pagi' ? 'Meet Pagi' : 'Meet Siang / Sore'}</strong> hari
+                  ini pukul <strong>{(session === 'pagi' ? todaysActivePagi : todaysActiveSiang)?.time} WIB</strong>.
+                  Kalau maksud Anda membuat jadwal untuk sesi{' '}
+                  <strong>{session === 'pagi' ? 'Siang / Sore' : 'Pagi'}</strong>, klik tab{' '}
+                  <strong>"{session === 'pagi' ? 'Meet Siang / Sore' : 'Meet Pagi'}"</strong> di atas terlebih dahulu.
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
