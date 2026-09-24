@@ -24,6 +24,10 @@ export const LaporanTimView: React.FC = () => {
   const myTeamIds = new Set(teamMembers.map((m) => m.id));
   const dayEntries = entries.filter((e) => e.date === selectedDate && myTeamIds.has(e.userId));
 
+  // Akun HRD aktif yang menjadi penanggung jawab "Mengetahui" — diambil otomatis dari data akun,
+  // bukan nama tetap, supaya selalu sesuai dengan siapa pun yang sedang menjabat sebagai HRD.
+  const hrdUser = allUsers.find((u) => u.role === 'hrd' && u.isActive !== false) || allUsers.find((u) => u.role === 'hrd');
+
   const handlePrint = () => {
     window.print();
   };
@@ -101,7 +105,7 @@ export const LaporanTimView: React.FC = () => {
             </div>
             <h2 className="text-xl font-black text-slate-900 mt-1">LUZIE GROUP INDONESIA</h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Divisi Tech &amp; Product Operations &bull; Koordinator: Hendra Wijaya
+              Divisi {currentUser.division} &bull; Koordinator: {currentUser.name}
             </p>
           </div>
           <div className="text-right text-xs">
@@ -176,17 +180,26 @@ export const LaporanTimView: React.FC = () => {
           </div>
         </div>
 
-        {/* Tanda Tangan Digital */}
+        {/* Tanda Tangan Digital — otomatis mengikuti akun yang sedang login (leader) & akun HRD aktif */}
         <div className="pt-8 border-t border-slate-100 grid grid-cols-2 gap-8 text-xs text-center">
           <div>
             <p className="text-slate-400">Dibuat oleh,</p>
-            <div className="font-bold text-slate-800 mt-12">Hendra Wijaya</div>
-            <p className="text-slate-500 text-[11px]">Koordinator Tim WFA</p>
+            <div className="font-bold text-slate-800 mt-12">{currentUser.name}</div>
+            <p className="text-slate-500 text-[11px]">Koordinator Tim WFA &bull; {currentUser.division}</p>
           </div>
           <div>
             <p className="text-slate-400">Mengetahui HRD,</p>
-            <div className="font-bold text-slate-800 mt-12">Maya Kartika</div>
-            <p className="text-slate-500 text-[11px]">Head of People &amp; Culture Luzie Group</p>
+            {hrdUser ? (
+              <>
+                <div className="font-bold text-slate-800 mt-12">{hrdUser.name}</div>
+                <p className="text-slate-500 text-[11px]">{hrdUser.division || 'People & Culture Luzie Group'}</p>
+              </>
+            ) : (
+              <>
+                <div className="font-bold text-slate-300 mt-12">Belum ada akun HRD</div>
+                <p className="text-slate-400 text-[11px]">Menunggu penunjukan HRD</p>
+              </>
+            )}
           </div>
         </div>
       </div>
