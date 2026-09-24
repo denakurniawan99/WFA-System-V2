@@ -38,7 +38,7 @@ const AVATAR_PRESETS = [
 ];
 
 export const AkunSayaView: React.FC<AkunSayaViewProps> = ({ onOpenSwitchAccount }) => {
-  const { currentUser, updateUser, showToast, verifyCurrentPassword } = useApp();
+  const { currentUser, updateUser, showToast, verifyCurrentPassword, mustChangePassword, isDefaultPasswordValue } = useApp();
 
   // State Profil Umum
   const [phoneNumber, setPhoneNumber] = useState('+62 812-3456-7890');
@@ -154,6 +154,11 @@ export const AkunSayaView: React.FC<AkunSayaViewProps> = ({ onOpenSwitchAccount 
 
     if (newPasswordInput.length < 6) {
       setPasswordError('Password baru minimal harus 6 karakter');
+      return;
+    }
+
+    if (isDefaultPasswordValue(newPasswordInput)) {
+      setPasswordError('Password baru tidak boleh sama dengan password default/bawaan sistem (mis. "123456"). Gunakan password lain yang lebih aman.');
       return;
     }
 
@@ -296,6 +301,17 @@ export const AkunSayaView: React.FC<AkunSayaViewProps> = ({ onOpenSwitchAccount 
                 <p className="text-xs text-slate-500">Perbarui kata sandi login sistem presensi WFA Anda secara berkala</p>
               </div>
             </div>
+
+            {mustChangePassword && (
+              <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+                <span>
+                  <strong>Password akun Anda masih memakai password bawaan/default.</strong> Demi keamanan data
+                  Anda, segera ganti dengan password baru yang hanya Anda ketahui — jangan gunakan password bawaan
+                  ini lagi.
+                </span>
+              </div>
+            )}
 
             {passwordError && (
               <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
