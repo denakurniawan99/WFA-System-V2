@@ -6,7 +6,14 @@ import { getTodayDateString } from '../data/initialData';
  * Aturan:
  * 1. Jika tanggal meeting < tanggal hari ini (ganti hari / masa lalu) -> EXPIRED (true)
  * 2. Jika status meeting adalah 'selesai' atau 'dibatalkan' -> EXPIRED (true)
- * 3. Jika tanggal meeting == hari ini, cek apakah jam mulai + durasi + toleransi telah terlewat -> EXPIRED (true)
+ *
+ * CATATAN: Sengaja TIDAK ada lagi auto-expire berdasarkan jam_mulai + durasi. Durasi yang
+ * diisi koordinator saat membuat jadwal cuma perkiraan — meeting sering berjalan lebih lama
+ * (atau karyawan sempat lama di Google Meet lalu balik ke aplikasi ini). Selama koordinator
+ * belum menekan tombol selesai/batalkan (status masih 'aktif'), kartu "Google Meet" & banner
+ * di Beranda Karyawan HARUS tetap menampilkan meeting ini supaya karyawan yang tidak sengaja
+ * menutup tab Meet tetap bisa masuk lagi ke meeting yang sedang berlangsung — berlaku sama
+ * untuk sesi Pagi maupun Siang/Sore.
  */
 export function isZoomMeetingExpired(
   meeting: ZoomMeetingInfo,
@@ -17,28 +24,9 @@ export function isZoomMeetingExpired(
     return true;
   }
 
-  // 2. Status selesai atau dibatalkan oleh leader
+  // 2. Status selesai atau dibatalkan oleh leader — satu-satunya penanda meeting benar-benar berakhir
   if (meeting.status === 'selesai' || meeting.status === 'dibatalkan') {
     return true;
-  }
-
-  // 3. Jika hari ini, periksa waktu meeting
-  if (meeting.date === todayStr) {
-    const now = new Date();
-    const parts = meeting.time.split(':').map(Number);
-    if (parts.length >= 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
-      const [startHour, startMin] = parts;
-      const durationMinutes = meeting.duration || 60;
-      
-      // Waktu selesai meeting dalam total menit hari ini
-      const endTotalMinutes = startHour * 60 + startMin + durationMinutes;
-      const currentTotalMinutes = now.getHours() * 60 + now.getMinutes();
-
-      // Toleransi 20 menit setelah durasi meeting selesai
-      if (currentTotalMinutes > endTotalMinutes + 20) {
-        return true;
-      }
-    }
   }
 
   return false;
