@@ -27,6 +27,7 @@ import { AnalisisPerformaHrdView } from './components/AnalisisPerformaHrdView';
 import { ImageModal } from './components/ImageModal';
 import { StartupNotificationModal } from './components/StartupNotificationModal';
 import { LoginView } from './components/LoginView';
+import { ForceChangePasswordView } from './components/ForceChangePasswordView';
 import {
   CheckCircle,
   AlertTriangle,
@@ -100,40 +101,33 @@ const MainApp: React.FC = () => {
     );
   }
 
+  // WAJIB ganti password: akun masih memakai password default/bawaan (akun baru / hasil reset
+  // HRD). Halaman ini MENGGANTIKAN seluruh aplikasi — sidebar & menu tidak bisa diakses sama
+  // sekali sebelum password diganti. Tidak berlaku saat HRD sedang "login sebagai" akun lain.
+  if (mustChangePassword) {
+    return (
+      <>
+        <ForceChangePasswordView />
+        <ToastStack toasts={toasts} />
+      </>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-100/70 text-slate-800 flex font-sans selection:bg-blue-100 selection:text-blue-900">
-      {/* Bar peringatan: HRD sedang login sebagai akun lain, dan/atau akun masih pakai password default */}
-      {(isImpersonating || mustChangePassword) && (
-        <div className="fixed top-0 inset-x-0 z-[60] flex flex-col shadow-md">
-          {isImpersonating && (
-            <div className="bg-amber-500 text-amber-950 text-xs sm:text-sm font-semibold px-4 py-2 flex items-center justify-center gap-3">
-              <span>
-                Anda login sebagai <strong>{currentUser.name}</strong>
-                {impersonatorUser ? ` (atas nama ${impersonatorUser.name})` : ''}
-              </span>
-              <button
-                onClick={returnToAdmin}
-                className="bg-amber-950 text-amber-50 px-3 py-1 rounded-lg hover:bg-amber-900 transition-colors"
-              >
-                Kembali ke Admin
-              </button>
-            </div>
-          )}
-
-          {mustChangePassword && (
-            <div className="bg-rose-600 text-white text-xs sm:text-sm font-semibold px-4 py-2 flex items-center justify-center gap-3 text-center">
-              <span>
-                🔒 Password akun Anda masih memakai password default/bawaan sistem. Segera ganti demi keamanan
-                akun Anda.
-              </span>
-              <button
-                onClick={() => setActiveMenu('akun-saya')}
-                className="bg-white text-rose-700 px-3 py-1 rounded-lg hover:bg-rose-50 transition-colors font-bold shrink-0"
-              >
-                Ganti Password Sekarang
-              </button>
-            </div>
-          )}
+      {/* Bar peringatan saat HRD sedang login sebagai akun lain */}
+      {isImpersonating && (
+        <div className="fixed top-0 inset-x-0 z-[60] bg-amber-500 text-amber-950 text-xs sm:text-sm font-semibold px-4 py-2 flex items-center justify-center gap-3 shadow-md">
+          <span>
+            Anda login sebagai <strong>{currentUser.name}</strong>
+            {impersonatorUser ? ` (atas nama ${impersonatorUser.name})` : ''}
+          </span>
+          <button
+            onClick={returnToAdmin}
+            className="bg-amber-950 text-amber-50 px-3 py-1 rounded-lg hover:bg-amber-900 transition-colors"
+          >
+            Kembali ke Admin
+          </button>
         </div>
       )}
 
@@ -146,11 +140,7 @@ const MainApp: React.FC = () => {
       />
 
       {/* Main Content Area */}
-      <div
-        className={`flex-1 flex flex-col min-w-0 ${
-          isImpersonating && mustChangePassword ? 'pt-[72px]' : isImpersonating || mustChangePassword ? 'pt-9' : ''
-        }`}
-      >
+      <div className={`flex-1 flex flex-col min-w-0 ${isImpersonating ? 'pt-9' : ''}`}>
         {/* Top Navbar */}
         <Header
           onToggleSidebar={() => setIsSidebarOpenMobile(!isSidebarOpenMobile)}
