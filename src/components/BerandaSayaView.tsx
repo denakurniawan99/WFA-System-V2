@@ -30,8 +30,10 @@ export const BerandaSayaView: React.FC<BerandaSayaViewProps> = ({ onNavigate }) 
   const { currentUser, getCurrentEntry, entries, warnings, zoomMeetings, joinZoomMeeting, showToast, wfaSettings } = useApp();
   const entry = getCurrentEntry();
 
-  // State modal peringatan belum absen pagi sebelum gabung Zoom
-  const [absenWarningMeeting, setAbsenWarningMeeting] = useState<ZoomMeetingInfo | null>(null);
+  // State modal peringatan wajib absen / wajib isi To-Do sebelum gabung Zoom
+  const [blockedMeeting, setBlockedMeeting] = useState<{ meeting: ZoomMeetingInfo; reason: 'absen' | 'todo' } | null>(
+    null
+  );
 
   // Hitung metrik rekap Karyawan
   const userEntries = entries.filter((e) => e.userId === currentUser.id);
@@ -54,13 +56,31 @@ export const BerandaSayaView: React.FC<BerandaSayaViewProps> = ({ onNavigate }) 
   // Cek jadwal Zoom koordinator: hanya yang belum lewat waktunya dan belum ganti hari
   const activeMeetings = getActiveZoomMeetingsForEmployee(zoomMeetings, currentUser.leaderId || '', entry.date);
 
-  // Handler gabung Zoom dengan validasi wajib absen pagi
+  // Handler gabung Zoom dengan validasi wajib absen pagi/siang (sesuai sesi meeting-nya) DAN
+  // wajib To-Do List (pagi) / centang tugas (siang) sudah diisi lebih dulu — supaya tombol
+  // "Gabung Meet" di Beranda ini tidak jadi celah untuk melewati urutan Absen -> To-Do -> Meet.
   const handleJoinMeetingClick = (meeting: ZoomMeetingInfo) => {
-    if (!entry.absenPagi) {
-      setAbsenWarningMeeting(meeting);
-      showToast('Wajib Absen Pagi terlebih dahulu sebelum bergabung ke Google Meet!', 'warning');
+    const isPagi = meeting.session === 'pagi';
+    const hasAbsen = isPagi ? !!entry.absenPagi : !!entry.absenSiang;
+
+    if (!hasAbsen) {
+      setBlockedMeeting({ meeting, reason: 'absen' });
+      showToast(`Wajib Absen ${isPagi ? 'Pagi' : 'Siang'} terlebih dahulu sebelum bergabung ke Google Meet!`, 'warning');
       return;
     }
+
+    const hasTodoReady = isPagi ? entry.todos.length > 0 : entry.completedTodos > 0;
+    if (!hasTodoReady) {
+      setBlockedMeeting({ meeting, reason: 'todo' });
+      showToast(
+        isPagi
+          ? 'Isi To-Do List dulu sebelum bergabung ke Google Meet!'
+          : 'Centang tugas yang sudah selesai dulu sebelum bergabung ke Google Meet!',
+        'warning'
+      );
+      return;
+    }
+
     joinZoomMeeting(meeting.id);
     window.open(meeting.link, '_blank');
   };
@@ -385,15 +405,20 @@ export const BerandaSayaView: React.FC<BerandaSayaViewProps> = ({ onNavigate }) 
         </div>
       </div>
 
-      {/* Modal Peringatan Wajib Absen Sebelum Gabung Zoom */}
+      {/* Modal Peringatan Wajib Absen / Wajib To-Do sebelum Gabung Zoom */}
       <AbsenRequiredModal
-        isOpen={!!absenWarningMeeting}
-        meeting={absenWarningMeeting}
+        isOpen={!!blockedMeeting}
+        meeting={blockedMeeting?.meeting ?? null}
+        reason={blockedMeeting?.reason ?? 'absen'}
         userName={currentUser.name}
-        onClose={() => setAbsenWarningMeeting(null)}
+        onClose={() => setBlockedMeeting(null)}
         onNavigateToAbsensi={() => {
-          setAbsenWarningMeeting(null);
+          setBlockedMeeting(null);
           onNavigate?.('absensi-gps');
+        }}
+        onNavigateToTodo={() => {
+          setBlockedMeeting(null);
+          onNavigate?.('todo-saya');
         }}
       />
     </div>
