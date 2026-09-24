@@ -33,6 +33,12 @@ interface AppContextType {
   impersonatorUser?: User;
   /** Cek password akun yang sedang login (untuk form ganti password) */
   verifyCurrentPassword: (plain: string) => boolean;
+  /** true kalau akun yang sedang login MASIH memakai password bawaan (akun baru / hasil reset HRD) —
+   *  dipakai untuk menampilkan peringatan wajib ganti password di seluruh aplikasi. */
+  mustChangePassword: boolean;
+  /** Cek apakah sebuah calon password baru sama dengan password bawaan yang TIDAK boleh dipakai
+   *  ulang oleh akun yang sedang login (dipakai validasi form Ganti Password). */
+  isDefaultPasswordValue: (plain: string) => boolean;
   entries: DailyWfaEntry[];
   selectedDate: string;
   activeImageModal: { url: string; title?: string } | null;
@@ -186,6 +192,7 @@ const EMPTY_ZOOM: ZoomMeetingInfo = {
 
 // Akun admin bawaan (sama dengan aplikasi referensi V2). WAJIB diganti passwordnya setelah login pertama.
 const DEFAULT_ADMIN_ID = 'usr-hrd-admin';
+const DEFAULT_ADMIN_PASSWORD = 'admin123';
 const buildDefaultAdmin = (): User => ({
   id: DEFAULT_ADMIN_ID,
   name: 'Admin HRD',
@@ -196,8 +203,18 @@ const buildDefaultAdmin = (): User => ({
   avatar: initialsAvatar('Admin HRD'),
   joinDate: getTodayDateString(),
   isActive: true,
-  password: hashPassword('admin123', DEFAULT_ADMIN_ID),
+  password: hashPassword(DEFAULT_ADMIN_PASSWORD, DEFAULT_ADMIN_ID),
 });
+
+// Cek apakah password yang TERSIMPAN saat ini untuk akun `u` masih memakai password bawaan
+// (baik password default akun baru/hasil reset HRD "123456", maupun password bawaan admin
+// pertama "admin123"). Dipakai untuk memicu peringatan wajib ganti password.
+const isDefaultPassword = (u: User): boolean => {
+  if (!u || u.id === 'guest') return false;
+  if (verifyPassword(DEFAULT_PASSWORD, u.password, u.id)) return true;
+  if (u.id === DEFAULT_ADMIN_ID && verifyPassword(DEFAULT_ADMIN_PASSWORD, u.password, u.id)) return true;
+  return false;
+};
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // ---------- Data (tersinkron realtime dengan Firebase) ----------
@@ -379,6 +396,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const verifyCurrentPassword = (plain: string) =>
     verifyPassword(plain, sessionUser?.password, sessionUser?.id || '');
+
+  // Wajib ganti password: berlaku untuk akun manapun (karyawan/leader/HRD) selama password yang
+  // TERSIMPAN masih persis password bawaan — baik karena akun baru dibuat, HRD menekan tombol
+  // Reset, maupun akun admin pertama yang belum pernah diganti. Tidak berlaku saat HRD sedang
+  // "login sebagai" (impersonate), karena itu bukan sesi login asli milik pemilik akun.
+  const mustChangePassword = isAuthenticated && !isImpersonating && isDefaultPassword(currentUser);
+
+  // Password bawaan yang tidak boleh dipakai lagi oleh akun yang sedang login sebagai password baru
+  const isDefaultPasswordValue = (plain: string): boolean => {
+    if (plain === DEFAULT_PASSWORD) return true;
+    if (currentUser.id === DEFAULT_ADMIN_ID && plain === DEFAULT_ADMIN_PASSWORD) return true;
+    return false;
+  };
 
   // ---------- Pengaturan ----------
   const updateWfaSettings = (newSettings: Partial<WfaSettings>) => {
@@ -969,6 +999,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isImpersonating,
         impersonatorUser,
         verifyCurrentPassword,
+        mustChangePassword,
+        isDefaultPasswordValue,
         entries,
         selectedDate,
         activeImageModal,
