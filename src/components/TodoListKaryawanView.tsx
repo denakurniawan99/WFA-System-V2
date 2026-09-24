@@ -24,7 +24,8 @@ import {
   ArrowRight,
   ShieldCheck,
   Check,
-  RefreshCw
+  RefreshCw,
+  Video
 } from 'lucide-react';
 import { SidebarMenuId } from './Sidebar';
 
@@ -41,10 +42,22 @@ export const TodoListKaryawanView: React.FC<TodoListKaryawanViewProps> = ({ onNa
     toggleTodoCentang,
     updateTodoProof,
     showToast,
-    openImageModal
+    openImageModal,
+    zoomMeetings,
+    selectedDate,
+    joinZoomMeeting
   } = useApp();
 
   const entry = getCurrentEntry();
+
+  // Jadwal Meet Pagi/Siang hari ini dari koordinator karyawan ini (kalau ada & masih aktif) —
+  // dipakai supaya Google Meet baru dibuka SETELAH To-Do List diisi/dicentang, bukan sebelumnya.
+  const todaysPagiMeeting = zoomMeetings.find(
+    (z) => z.leaderId === currentUser.leaderId && z.date === selectedDate && z.status === 'aktif' && z.session === 'pagi'
+  );
+  const todaysSiangMeeting = zoomMeetings.find(
+    (z) => z.leaderId === currentUser.leaderId && z.date === selectedDate && z.status === 'aktif' && z.session === 'siang'
+  );
 
   // State draft input tugas pagi (default 3 baris persis Gambar 3)
   const [taskInputs, setTaskInputs] = useState<string[]>(['', '', '']);
@@ -56,6 +69,7 @@ export const TodoListKaryawanView: React.FC<TodoListKaryawanViewProps> = ({ onNa
   const [inputLink, setInputLink] = useState('');
 
   const isAbsenPagiDone = !!entry.absenPagi;
+  const isAbsenSiangDone = !!entry.absenSiang;
 
   // Ubah teks baris tugas
   const handleInputChange = (index: number, val: string) => {
@@ -110,7 +124,17 @@ export const TodoListKaryawanView: React.FC<TodoListKaryawanViewProps> = ({ onNa
 
     setIsSentToCoordinator(true);
     setIsRedirectingToHubstaff(true);
-    showToast('To-Do List berhasil dikirim ke koordinator! Mengalihkan ke aktivasi Hubstaff...', 'success');
+
+    // Kirim ke koordinator selesai -> KALAU ada jadwal Meet Pagi hari ini, baru sekarang Meet
+    // dibuka (bukan langsung saat absen), supaya To-Do List pasti terisi dulu sebelum karyawan
+    // "kabur" ke Google Meet. Lalu tetap diarahkan ke Hubstaff untuk mengaktifkan time-tracking.
+    if (todaysPagiMeeting) {
+      joinZoomMeeting(todaysPagiMeeting.id);
+      window.open(todaysPagiMeeting.link, '_blank', 'noopener,noreferrer');
+      showToast('To-Do List terkirim! Membuka Google Meet Pagi & mengalihkan ke Hubstaff...', 'success');
+    } else {
+      showToast('To-Do List berhasil dikirim ke koordinator! Mengalihkan ke aktivasi Hubstaff...', 'success');
+    }
 
     // Otomatis mengarahkan ke aktivasi Hubstaff
     setTimeout(() => {
@@ -143,6 +167,16 @@ export const TodoListKaryawanView: React.FC<TodoListKaryawanViewProps> = ({ onNa
     setEditingProofId(null);
     setInputLink('');
     showToast('Tautan dokumen berhasil disimpan', 'success');
+  };
+
+  // Buka Google Meet Siang — ini pengganti tombol "kirim" untuk sesi siang (bagian Centang
+  // Tugas memang tidak punya tombol submit seperti To-Do List Pagi, jadi tombol inilah yang
+  // jadi penanda "sudah dicentang, siap lanjut ke meeting").
+  const handleOpenSiangMeet = () => {
+    if (!todaysSiangMeeting) return;
+    joinZoomMeeting(todaysSiangMeeting.id);
+    window.open(todaysSiangMeeting.link, '_blank', 'noopener,noreferrer');
+    showToast('Membuka Google Meet Siang/Sore...', 'success');
   };
 
   return (
@@ -454,6 +488,24 @@ export const TodoListKaryawanView: React.FC<TodoListKaryawanViewProps> = ({ onNa
                 </div>
               ))}
             </div>
+
+            {/* CTA "Buka Google Meet" untuk sesi Siang — pengganti tombol kirim, muncul
+                setelah absen siang & kalau memang ada jadwal Meet Siang/Sore hari ini. */}
+            {isAbsenSiangDone && todaysSiangMeeting && (
+              <div className="pt-4 mt-1 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <p className="text-xs text-slate-500">
+                  Sudah centang &amp; lampirkan bukti tugas yang selesai? Lanjut gabung Google Meet Siang/Sore.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleOpenSiangMeet}
+                  className="shrink-0 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs transition-colors shadow-sm"
+                >
+                  <Video className="w-3.5 h-3.5" />
+                  <span>Buka Google Meet Siang/Sore</span>
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
