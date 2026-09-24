@@ -21,7 +21,7 @@ interface AbsensiGpsViewProps {
 }
 
 export const AbsensiGpsView: React.FC<AbsensiGpsViewProps> = ({ onNavigate }) => {
-  const { currentUser, getCurrentEntry, doAbsenPagi, doAbsenSiang, showToast, zoomMeetings, selectedDate, joinZoomMeeting } = useApp();
+  const { currentUser, getCurrentEntry, doAbsenPagi, doAbsenSiang, showToast, zoomMeetings, selectedDate } = useApp();
   const entry = getCurrentEntry();
 
   // Jadwal Meet Pagi/Siang hari ini dari koordinator karyawan ini sendiri (kalau ada & masih aktif)
@@ -91,19 +91,16 @@ export const AbsensiGpsView: React.FC<AbsensiGpsViewProps> = ({ onNavigate }) =>
     doAbsenPagi(locWithCoords, 'Absensi otomatis dengan verifikasi GPS');
     setIsRedirectingToTodo(true);
 
+    // PENTING: Google Meet TIDAK dibuka di sini lagi. Supaya karyawan tidak lupa isi To-Do List
+    // (fokus keburu pindah ke tab Meet), Meet baru dibuka SETELAH To-Do List Pagi dikirim ke
+    // koordinator (lihat handleSendToCoordinator di TodoListKaryawanView).
     if (todaysPagiMeeting) {
-      // Ada jadwal Meet Pagi hari ini -> langsung buka Google Meet di tab baru
-      showToast('Presensi Pagi berhasil dicatat! Membuka Google Meet Pagi...', 'success');
-      joinZoomMeeting(todaysPagiMeeting.id);
-      window.open(todaysPagiMeeting.link, '_blank', 'noopener,noreferrer');
+      showToast('Presensi Pagi berhasil dicatat! Isi To-Do List dulu, baru Google Meet akan dibuka.', 'success');
     } else {
       showToast('Presensi Pagi berhasil dicatat! Mengalihkan ke To-Do List...', 'success');
     }
 
-    // Otomatis mengarahkan ke pengisian To-Do List. Delay dipersingkat & TETAP dijalankan
-    // meski Google Meet dibuka di tab baru — supaya begitu fokus kembali ke tab aplikasi ini,
-    // karyawan sudah langsung berada di halaman To-Do List, bukan tertinggal di halaman Absensi
-    // (karyawan mudah lupa isi To-Do kalau fokusnya keburu pindah ke tab Meet).
+    // Otomatis mengarahkan ke pengisian To-Do List.
     setTimeout(() => {
       onNavigate?.('todo-saya');
     }, 400);
@@ -121,19 +118,17 @@ export const AbsensiGpsView: React.FC<AbsensiGpsViewProps> = ({ onNavigate }) =>
     doAbsenSiang(locWithCoords, 'Absen siang terverifikasi GPS');
     setIsRedirectingToTodo(true);
 
+    // PENTING: Google Meet TIDAK dibuka di sini lagi. Karyawan harus centang To-Do List dulu
+    // (di halaman To-Do List) — Meet baru dibuka lewat tombol "Buka Google Meet" yang muncul
+    // di kartu Penilaian Skor & Centang Tugas setelah absen siang.
     if (todaysSiangMeeting) {
-      // Ada jadwal Meet Siang/Sore hari ini -> langsung buka Google Meet di tab baru
-      showToast('Presensi Siang berhasil dicatat! Membuka Google Meet Siang/Sore...', 'success');
-      joinZoomMeeting(todaysSiangMeeting.id);
-      window.open(todaysSiangMeeting.link, '_blank', 'noopener,noreferrer');
+      showToast('Presensi Siang berhasil dicatat! Centang To-Do List dulu, baru Google Meet akan dibuka.', 'success');
     } else {
       showToast('Presensi Siang berhasil dicatat! Mengalihkan ke To-Do List untuk centang & lampirkan bukti...', 'success');
     }
 
     // Otomatis mengarahkan ke To-Do List supaya karyawan langsung centang tugas yang
     // sudah dikerjakan sekaligus melampirkan bukti (link/foto) sebelum jam kerja berakhir.
-    // Delay dipersingkat & TETAP dijalankan meski Google Meet dibuka di tab baru — supaya
-    // tab aplikasi ini sudah menampilkan To-Do List begitu karyawan kembali dari tab Meet.
     setTimeout(() => {
       onNavigate?.('todo-saya');
     }, 400);
