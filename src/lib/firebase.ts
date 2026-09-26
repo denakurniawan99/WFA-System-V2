@@ -10,7 +10,7 @@
  * menyembunyikan apiKey.
  */
 import { initializeApp } from 'firebase/app';
-import { getDatabase, ref, onValue, update, set, get, type DatabaseReference } from 'firebase/database';
+import { getDatabase, ref, onValue, update, set, get, push, serverTimestamp, type DatabaseReference } from 'firebase/database';
 
 const env = import.meta.env;
 
@@ -39,7 +39,13 @@ export const DB_ROOT = (env.VITE_DB_ROOT || 'luzie-react').replace(/^\/+|\/+$/g,
 export const dbRef = (path: string): DatabaseReference => ref(rtdb, `${DB_ROOT}/${path}`);
 export const rootRef = (): DatabaseReference => ref(rtdb, DB_ROOT);
 
-export { onValue, update, set, get, ref };
+/** Ref khusus untuk data tracking Hubstaff (dipakai HubstaffView + WFA Hubstaff Agent).
+ *  Ditambahkan agar aplikasi desktop (Tauri) yang membungkus WFA System ini bisa
+ *  langsung menulis sesi tracking tanpa perlu aplikasi terpisah lagi. Tidak mengubah
+ *  struktur data WFA System yang sudah ada — hanya sub-folder baru "hubstaff". */
+export const hubstaffRef = (path: string): DatabaseReference => ref(rtdb, `${DB_ROOT}/hubstaff/${path}`);
+
+export { onValue, update, set, get, push, serverTimestamp, ref };
 
 /** Firebase menolak `undefined` — buang dari object, ubah jadi null di dalam array. */
 export function cleanForFirebase<T>(value: T): T | null {
