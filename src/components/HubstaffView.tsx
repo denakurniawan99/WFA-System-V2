@@ -1,143 +1,203 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import {
   FileText,
   Laptop,
   Smartphone,
-  ExternalLink,
   HelpCircle,
   CheckCircle2,
   Lock,
-  Unlock,
+  Clock,
+  Check,
+  History,
   Play,
   Pause,
-  Clock,
-  AlertTriangle,
-  ArrowRight,
-  ShieldCheck,
-  Check,
-  RefreshCw
+  Square,
 } from 'lucide-react';
 import { SidebarMenuId } from './Sidebar';
+import { useFirebaseCollection, useFirebaseValue } from '../lib/useFirebaseCollection';
+import { getTodayDateString } from '../data/initialData';
+import { startSession, heartbeat, stopSession, SessionStatus as AgentSessionStatus } from '../lib/hubstaffData';
 
 interface HubstaffViewProps {
   onNavigate?: (menu: SidebarMenuId) => void;
 }
 
+type SessionStatus = AgentSessionStatus;
+
+interface TrackingSession {
+  id: string;
+  userId: string;
+  userName: string;
+  date: string;
+  startedAt: number;
+  endedAt: number | null;
+  durationSeconds: number;
+  note: string;
+  status: SessionStatus;
+}
+
+interface LiveStatus {
+  userName: string;
+  isTracking: boolean;
+  currentSessionId: string | null;
+  lastHeartbeatAt: number | null;
+}
+
+const LIVE_STATUS_DEFAULTS: LiveStatus = {
+  userName: '',
+  isTracking: false,
+  currentSessionId: null,
+  lastHeartbeatAt: null,
+};
+
+/** Kalau denyut terakhir lebih lama dari ini, anggap sesi terputus (mis. tab/aplikasi
+ *  tertutup mendadak di perangkat lain) meski status Firebase masih 'running'. */
+const STALE_THRESHOLD_MS = 60_000;
+const HEARTBEAT_MS = 15_000;
+
+const formatHMS = (totalSeconds: number): string => {
+  const s = Math.max(0, Math.round(totalSeconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+};
+
+const formatClock = (ms: number): string =>
+  new Date(ms).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+
 export const HubstaffView: React.FC<HubstaffViewProps> = ({ onNavigate }) => {
-  const { currentUser, getCurrentEntry, doAbsenPagi, updateHubstaffSeconds, showToast } = useApp();
+  const { currentUser, getCurrentEntry, doAbsenPagi, showToast } = useApp();
   const entry = getCurrentEntry();
 
-  // Status kelengkapan persiapan kerja
   const isAbsenPagiDone = !!entry.absenPagi;
-  const isAbsenSiangDone = !!entry.absenSiang;
   const isTodoListDone = entry.todos.length > 0;
   const isReadyForHubstaff = isAbsenPagiDone && isTodoListDone;
 
-  // Sumber kebenaran total waktu tracking adalah entry.hubstaffSeconds di Firebase (per akun,
-  // per TANGGAL — jadi otomatis "reset" tiap hari karena entry-nya sendiri per-tanggal, dan
-  // otomatis TERSINKRON ke semua perangkat sehingga bisa dilihat lagi lewat Riwayat Absen).
-  const [isTracking, setIsTracking] = useState(false);
-  const [trackedSeconds, setTrackedSeconds] = useState(entry.hubstaffSeconds || 0);
-  const [showLaunchModal, setShowLaunchModal] = useState<string | null>(null);
+  const today = getTodayDateString();
 
-  const trackedSecondsRef = React.useRef(trackedSeconds);
-  trackedSecondsRef.current = trackedSeconds;
-  const entryIdRef = React.useRef(entry.id);
-  const prevAbsenSiangRef = React.useRef(isAbsenSiangDone);
+  const { value: liveStatus, loaded: liveLoaded } = useFirebaseValue<LiveStatus>(
+    `hubstaff/liveStatus/${currentUser.id}`,
+    LIVE_STATUS_DEFAULTS
+  );
 
-  // Kalau entry berganti (hari baru / user lain), muat ulang total tersimpan & hentikan timer.
+  const { items: sessions, loaded: sessionsLoaded } = useFirebaseCollection<TrackingSession>({
+    path: `hubstaff/sessions/${currentUser.id}`,
+    normalize: (raw, id) => ({
+      id: raw?.id || id,
+      userId: raw?.userId || currentUser.id,
+      userName: raw?.userName || currentUser.name,
+      date: raw?.date || '',
+      startedAt: raw?.startedAt || 0,
+      endedAt: raw?.endedAt ?? null,
+      durationSeconds: raw?.durationSeconds || 0,
+      note: raw?.note || '',
+      status: (raw?.status as SessionStatus) || 'stopped',
+    }),
+    sort: (a, b) => b.startedAt - a.startedAt,
+  });
+
+  const todaySessions = sessions.filter((s) => s.date === today);
+
+  const heartbeatAge = liveStatus.lastHeartbeatAt ? Date.now() - liveStatus.lastHeartbeatAt : Infinity;
+  const isStale = liveStatus.isTracking && heartbeatAge >= STALE_THRESHOLD_MS;
+
+  // ---- Kontrol tracking (Mulai / Jeda / Selesai) langsung dari halaman ini ----
+  const [localStatus, setLocalStatus] = useState<'idle' | SessionStatus>('idle');
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const [note, setNote] = useState('');
+  const [syncing, setSyncing] = useState(false);
+  const resumedRef = useRef(false);
+
+  const tickRef = useRef<number | null>(null);
+  const heartbeatRef = useRef<number | null>(null);
+
+  const otherTodaySeconds = todaySessions
+    .filter((s) => s.id !== sessionId)
+    .reduce((sum, s) => sum + (s.durationSeconds || 0), 0);
+
+  // Resume otomatis: kalau ada sesi 'running' milik user ini yang masih hidup (heartbeat
+  // baru), lanjutkan tampilannya di sini — misal tab sempat ditutup lalu dibuka lagi.
   useEffect(() => {
-    if (entryIdRef.current !== entry.id) {
-      entryIdRef.current = entry.id;
-      setTrackedSeconds(entry.hubstaffSeconds || 0);
-      setIsTracking(false);
+    if (resumedRef.current || !sessionsLoaded || !liveLoaded) return;
+    resumedRef.current = true;
+    if (liveStatus.isTracking && liveStatus.currentSessionId && !isStale) {
+      const active = sessions.find((s) => s.id === liveStatus.currentSessionId);
+      if (active && active.status !== 'stopped') {
+        setSessionId(active.id);
+        setElapsed(active.durationSeconds || 0);
+        setLocalStatus(active.status);
+        setNote(active.note || '');
+      }
     }
-  }, [entry.id, entry.hubstaffSeconds]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionsLoaded, liveLoaded]);
 
-  // Detak per detik saat tracking aktif
   useEffect(() => {
-    let interval: ReturnType<typeof setInterval> | null = null;
-    if (isTracking) {
-      interval = setInterval(() => {
-        setTrackedSeconds((prev) => prev + 1);
-      }, 1000);
-    }
+    if (localStatus !== 'running') return;
+    tickRef.current = window.setInterval(() => setElapsed((s) => s + 1), 1000);
+    heartbeatRef.current = window.setInterval(() => {
+      setElapsed((current) => {
+        if (sessionId) heartbeat(currentUser.id, sessionId, current, 'running').catch(() => {});
+        return current;
+      });
+    }, HEARTBEAT_MS);
     return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [isTracking]);
-
-  // Sinkron berkala ke Firebase (tiap 10 detik) selagi tracking aktif, supaya progress
-  // tidak hilang kalau tab tertutup mendadak & supaya bisa terlihat real-time di Riwayat Absen.
-  useEffect(() => {
-    if (!isTracking) return;
-    const syncInterval = setInterval(() => {
-      updateHubstaffSeconds(trackedSecondsRef.current);
-    }, 10000);
-    return () => clearInterval(syncInterval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isTracking]);
-
-  // OTOMATIS BERHENTI begitu Absen Siang baru saja tercatat (karyawan dianggap selesai
-  // sesi kerja WFA hari itu) — sekaligus simpan total akhirnya ke Firebase.
-  useEffect(() => {
-    if (!prevAbsenSiangRef.current && isAbsenSiangDone && isTracking) {
-      setIsTracking(false);
-      updateHubstaffSeconds(trackedSecondsRef.current);
-      showToast('Absen siang tercatat — timer Hubstaff otomatis dihentikan.', 'info');
-    }
-    prevAbsenSiangRef.current = isAbsenSiangDone;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAbsenSiangDone]);
-
-  // Simpan progress terakhir saat halaman ditinggalkan (best-effort)
-  useEffect(() => {
-    return () => {
-      updateHubstaffSeconds(trackedSecondsRef.current);
+      if (tickRef.current) window.clearInterval(tickRef.current);
+      if (heartbeatRef.current) window.clearInterval(heartbeatRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [localStatus, sessionId]);
 
-  const formatTrackingTime = (totalSeconds: number) => {
-    const hours = Math.floor(totalSeconds / 3600);
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const seconds = totalSeconds % 60;
-    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-  };
-
-  const handleToggleTimer = () => {
+  const handleStart = async () => {
     if (!isReadyForHubstaff) {
       showToast('Selesaikan absen pagi dan to-do list terlebih dahulu!', 'warning');
       return;
     }
-    if (!isTracking) {
-      setIsTracking(true);
-      showToast('Timer Hubstaff dimulai! Time tracking aktif.', 'success');
-    } else {
-      setIsTracking(false);
-      updateHubstaffSeconds(trackedSecondsRef.current);
-      showToast('Timer Hubstaff dijeda sementara.', 'info');
+    setSyncing(true);
+    try {
+      const id = await startSession(currentUser.id, currentUser.name, note);
+      setSessionId(id);
+      setElapsed(0);
+      setLocalStatus('running');
+      showToast('Tracking dimulai.', 'success');
+    } catch {
+      showToast('Gagal memulai tracking. Periksa koneksi internet.', 'warning');
+    } finally {
+      setSyncing(false);
     }
   };
 
-  const handleOpenDesktop = () => {
-    if (!isReadyForHubstaff) {
-      showToast('Hubstaff terkunci. Silakan penuhi status persiapan kerja.', 'warning');
-      return;
-    }
-    // Coba buka protokol hubstaff URI scheme jika terinstall di desktop
-    window.location.href = 'hubstaff://';
-    setShowLaunchModal('desktop');
+  const handlePause = async () => {
+    setLocalStatus('paused');
+    if (sessionId) await heartbeat(currentUser.id, sessionId, elapsed, 'paused').catch(() => {});
+    showToast('Tracking dijeda.', 'info');
   };
 
-  const handleOpenMobile = () => {
-    if (!isReadyForHubstaff) {
-      showToast('Hubstaff terkunci. Silakan penuhi status persiapan kerja.', 'warning');
-      return;
-    }
-    setShowLaunchModal('mobile');
+  const handleResume = () => {
+    setLocalStatus('running');
   };
+
+  const handleStop = async () => {
+    setSyncing(true);
+    try {
+      if (sessionId) await stopSession(currentUser.id, sessionId, elapsed);
+      setLocalStatus('idle');
+      setSessionId(null);
+      setElapsed(0);
+      setNote('');
+      showToast('Sesi tracking disimpan.', 'success');
+    } catch {
+      showToast('Gagal menyimpan sesi. Coba lagi.', 'warning');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const todayTotalSeconds = otherTodaySeconds + (localStatus !== 'idle' ? elapsed : 0);
+  const isActuallyTracking = localStatus === 'running';
 
   const handleQuickAbsenPagi = () => {
     doAbsenPagi('Rumah (WFA)', 'Absen cepat via halaman persiapan Hubstaff');
@@ -147,9 +207,11 @@ export const HubstaffView: React.FC<HubstaffViewProps> = ({ onNavigate }) => {
     }, 1200);
   };
 
+  const statusLabel = (s: SessionStatus) =>
+    s === 'running' ? 'Berjalan' : s === 'paused' ? 'Dijeda' : 'Selesai';
+
   return (
     <div className="space-y-6 max-w-6xl mx-auto pb-12">
-      {/* Title & Subtitle Persis Screenshot */}
       <div>
         <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Hubstaff</h1>
         <p className="text-xs text-slate-500 mt-1">Aktifkan time tracking sebelum mulai bekerja</p>
@@ -163,7 +225,6 @@ export const HubstaffView: React.FC<HubstaffViewProps> = ({ onNavigate }) => {
         </div>
 
         <div className="space-y-3">
-          {/* Item 1: Status Absen Pagi */}
           <div className="flex items-center justify-between p-4 rounded-xl border border-slate-100 bg-white hover:border-slate-200 transition-all">
             <div className="flex items-center gap-3.5">
               {isAbsenPagiDone ? (
@@ -191,19 +252,16 @@ export const HubstaffView: React.FC<HubstaffViewProps> = ({ onNavigate }) => {
                 <span>Sudah Absen</span>
               </span>
             ) : (
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleQuickAbsenPagi}
-                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs transition-colors"
-                >
-                  Absen Sekarang
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={handleQuickAbsenPagi}
+                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs transition-colors"
+              >
+                Absen Sekarang
+              </button>
             )}
           </div>
 
-          {/* Item 2: Status To-Do List */}
           <div className="flex items-center justify-between p-4 rounded-xl border border-slate-100 bg-white hover:border-slate-200 transition-all">
             <div className="flex items-center gap-3.5">
               {isTodoListDone ? (
@@ -243,177 +301,229 @@ export const HubstaffView: React.FC<HubstaffViewProps> = ({ onNavigate }) => {
         </div>
       </div>
 
-      {/* CARD 2: BUKA HUBSTAFF */}
+      {/* CARD 2: TRACKING (INTERAKTIF, LANGSUNG DARI SINI) */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 space-y-5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 text-slate-900 font-bold text-sm">
-            <Laptop className="w-4 h-4 text-blue-600" />
-            <span>Buka Hubstaff</span>
+            <Clock className="w-4 h-4 text-blue-600" />
+            <span>Time Tracking</span>
           </div>
-
-          {isReadyForHubstaff && (
+          {isActuallyTracking && (
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-xs font-semibold text-emerald-700">Hubstaff Siap Digunakan</span>
+              <span className="text-xs font-semibold text-emerald-700">Sedang Tracking</span>
             </div>
           )}
         </div>
 
-        {/* Banner Status Persyaratan */}
         {!isReadyForHubstaff ? (
           <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200/80 text-amber-800 text-xs flex items-center gap-2.5">
             <Lock className="w-4 h-4 text-amber-600 shrink-0" />
             <span>Selesaikan absen pagi dan to-do list terlebih dahulu untuk mengaktifkan Hubstaff.</span>
           </div>
-        ) : (
-          <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center justify-between gap-2.5">
-            <div className="flex items-center gap-2.5">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>
-                Status Persiapan Lengkap! Absen pagi dan to-do list telah siap. Anda dapat meluncurkan time tracking Hubstaff sekarang.
-              </span>
-            </div>
-            <button
-              onClick={handleToggleTimer}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 ${
-                isTracking
-                  ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-xs'
-                  : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
+        ) : isStale && localStatus === 'idle' ? (
+          <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200/80 text-amber-800 text-xs flex items-center gap-2.5">
+            <span>
+              Ada sesi yang tercatat terputus (perangkat lain tertutup saat masih tracking). Anda
+              bisa mulai sesi baru sekarang.
+            </span>
+          </div>
+        ) : null}
+
+        <div className="p-4 rounded-xl border border-blue-200 bg-gradient-to-r from-blue-50/70 to-sky-50/50 flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-3 text-left">
+            <div
+              className={`w-12 h-12 rounded-xl flex items-center justify-center font-mono font-bold text-white shadow-sm ${
+                isActuallyTracking ? 'bg-blue-600' : 'bg-slate-400'
               }`}
             >
-              {isTracking ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-              <span>{isTracking ? 'Jeda Timer' : 'Mulai Timer'}</span>
-            </button>
-          </div>
-        )}
-
-        {/* Interactive Hubstaff Live Tracking Panel (Ketika aktif) */}
-        {isReadyForHubstaff && (
-          <div className="p-4 rounded-xl border border-blue-200 bg-gradient-to-r from-blue-50/70 to-sky-50/50 flex flex-col md:flex-row items-center justify-between gap-4">
-            <div className="flex items-center gap-3 text-left">
-              <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-mono font-bold text-white shadow-sm ${
-                isTracking ? 'bg-blue-600' : 'bg-slate-400'
-              }`}>
-                <Clock className="w-6 h-6" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-slate-800">Luzie Group &bull; {currentUser.division}</span>
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase ${
-                    isTracking ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'
-                  }`}>
-                    {isTracking ? '● Tracking Aktif' : 'Dijeda'}
-                  </span>
-                </div>
-                <div className="text-xl font-black font-mono text-slate-900 mt-0.5">
-                  {formatTrackingTime(trackedSeconds)}
-                </div>
-                <p className="text-[11px] text-slate-500">
-                  Target harian: 08:00:00 jam &bull; Aktivitas otomatis tercatat untuk rekap WFA
-                </p>
-              </div>
+              <Clock className="w-6 h-6" />
             </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleToggleTimer}
-                className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-sm ${
-                  isTracking
-                    ? 'bg-rose-600 hover:bg-rose-700 text-white'
-                    : 'bg-blue-600 hover:bg-blue-700 text-white'
-                }`}
-              >
-                {isTracking ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                <span>{isTracking ? 'Stop / Istirahat' : 'Mulai Tracking Hubstaff'}</span>
-              </button>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-slate-800">
+                  Luzie Group &bull; {currentUser.division}
+                </span>
+                <span
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase ${
+                    isActuallyTracking
+                      ? 'bg-emerald-100 text-emerald-700'
+                      : localStatus === 'paused'
+                      ? 'bg-amber-100 text-amber-700'
+                      : 'bg-slate-200 text-slate-600'
+                  }`}
+                >
+                  {isActuallyTracking ? '● Tracking Aktif' : localStatus === 'paused' ? 'Dijeda' : 'Tidak Aktif'}
+                </span>
+              </div>
+              <div className="text-xl font-black font-mono text-slate-900 mt-0.5">
+                {sessionsLoaded ? formatHMS(todayTotalSeconds) : '--:--:--'}
+              </div>
+              <p className="text-[11px] text-slate-500">Total tercatat hari ini</p>
             </div>
           </div>
-        )}
 
-        {/* 2 Kotak Aplikasi Desktop & Mobile */}
+          <div className="flex items-center gap-2 w-full md:w-auto">
+            {localStatus === 'idle' && (
+              <>
+                <input
+                  type="text"
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="Sedang mengerjakan apa? (opsional)"
+                  className="flex-1 md:w-56 px-3 py-2 rounded-xl border border-slate-200 text-xs outline-none focus:border-blue-400"
+                />
+                <button
+                  onClick={handleStart}
+                  disabled={!isReadyForHubstaff || syncing}
+                  className="px-5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-sm bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                >
+                  <Play className="w-4 h-4" />
+                  <span>Mulai</span>
+                </button>
+              </>
+            )}
+            {localStatus === 'running' && (
+              <>
+                <button
+                  onClick={handlePause}
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-sm bg-slate-600 hover:bg-slate-700 text-white"
+                >
+                  <Pause className="w-4 h-4" />
+                  <span>Jeda</span>
+                </button>
+                <button
+                  onClick={handleStop}
+                  disabled={syncing}
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-sm bg-rose-600 hover:bg-rose-700 text-white disabled:opacity-50"
+                >
+                  <Square className="w-3.5 h-3.5" />
+                  <span>Selesai</span>
+                </button>
+              </>
+            )}
+            {localStatus === 'paused' && (
+              <>
+                <button
+                  onClick={handleResume}
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-sm bg-blue-600 hover:bg-blue-700 text-white"
+                >
+                  <Play className="w-4 h-4" />
+                  <span>Lanjut</span>
+                </button>
+                <button
+                  onClick={handleStop}
+                  disabled={syncing}
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-sm bg-rose-600 hover:bg-rose-700 text-white disabled:opacity-50"
+                >
+                  <Square className="w-3.5 h-3.5" />
+                  <span>Selesai</span>
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Riwayat sesi hari ini */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-slate-700 font-bold text-xs">
+            <History className="w-3.5 h-3.5" />
+            <span>Riwayat Sesi Hari Ini</span>
+          </div>
+          {!sessionsLoaded ? (
+            <p className="text-xs text-slate-400">Memuat riwayat...</p>
+          ) : todaySessions.length === 0 && localStatus === 'idle' ? (
+            <p className="text-xs text-slate-400">Belum ada sesi tracking hari ini.</p>
+          ) : (
+            <div className="space-y-2">
+              {localStatus !== 'idle' && (
+                <div className="flex items-center justify-between p-3 rounded-xl border border-blue-100 bg-blue-50/50 text-xs">
+                  <div>
+                    <div className="font-semibold text-slate-800">Sesi berjalan &ndash; sekarang</div>
+                    {note && <div className="text-slate-500 mt-0.5">{note}</div>}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono font-bold text-slate-700">{formatHMS(elapsed)}</span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase ${
+                        localStatus === 'running' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                      }`}
+                    >
+                      {statusLabel(localStatus)}
+                    </span>
+                  </div>
+                </div>
+              )}
+              {todaySessions
+                .filter((s) => s.id !== sessionId)
+                .map((s) => (
+                  <div
+                    key={s.id}
+                    className="flex items-center justify-between p-3 rounded-xl border border-slate-100 bg-slate-50/40 text-xs"
+                  >
+                    <div>
+                      <div className="font-semibold text-slate-800">
+                        {formatClock(s.startedAt)} &ndash; {s.endedAt ? formatClock(s.endedAt) : 'sekarang'}
+                      </div>
+                      {s.note && <div className="text-slate-500 mt-0.5">{s.note}</div>}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-bold text-slate-700">{formatHMS(s.durationSeconds)}</span>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase ${
+                          s.status === 'running'
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : s.status === 'paused'
+                            ? 'bg-amber-100 text-amber-700'
+                            : 'bg-slate-200 text-slate-600'
+                        }`}
+                      >
+                        {statusLabel(s.status)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          )}
+        </div>
+
+        <p className="text-[11px] text-slate-400 text-center pt-1">
+          Tracking berjalan selama aplikasi WFA System ini terbuka (boleh di-minimize). Screenshot
+          &amp; activity level otomatis akan menyusul di versi berikutnya.
+        </p>
+      </div>
+
+      {/* CARD 3: APLIKASI DESKTOP */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 space-y-5">
+        <div className="flex items-center gap-2 text-slate-900 font-bold text-sm">
+          <Laptop className="w-4 h-4 text-blue-600" />
+          <span>Aplikasi Desktop</span>
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Kotak Aplikasi Desktop */}
-          <div className="border border-slate-200/80 rounded-2xl p-6 text-center space-y-4 bg-slate-50/40 hover:bg-slate-50/70 transition-colors">
+          <div className="border border-slate-200/80 rounded-2xl p-6 text-center space-y-3 bg-slate-50/40">
             <div className="w-12 h-12 mx-auto rounded-xl bg-slate-100 flex items-center justify-center text-slate-500">
               <Laptop className="w-6 h-6" />
             </div>
-            <div>
-              <h3 className="text-sm font-bold text-slate-800">Aplikasi Desktop</h3>
-              <p className="text-xs text-slate-400 mt-0.5">Windows / Mac / Linux</p>
-            </div>
-
-            {!isReadyForHubstaff ? (
-              <button
-                type="button"
-                disabled
-                className="w-full max-w-xs mx-auto py-2.5 px-4 rounded-xl bg-slate-100 text-slate-400 font-bold text-xs flex items-center justify-center gap-2 cursor-not-allowed"
-              >
-                <Lock className="w-3.5 h-3.5" />
-                <span>Terkunci</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={handleOpenDesktop}
-                className="w-full max-w-xs mx-auto py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition-colors"
-              >
-                <Unlock className="w-3.5 h-3.5" />
-                <span>Buka di Desktop</span>
-              </button>
-            )}
+            <h3 className="text-sm font-bold text-slate-800">Windows / Mac / Linux</h3>
+            <p className="text-[11px] text-slate-500">
+              Halaman ini bekerja sama persis di dalam aplikasi desktop WFA System — satu aplikasi
+              untuk semuanya (absensi, to-do, dan tracking).
+            </p>
           </div>
-
-          {/* Kotak Aplikasi Mobile */}
-          <div className="border border-slate-200/80 rounded-2xl p-6 text-center space-y-4 bg-slate-50/40 hover:bg-slate-50/70 transition-colors">
+          <div className="border border-slate-200/80 rounded-2xl p-6 text-center space-y-3 bg-slate-50/40 opacity-70">
             <div className="w-12 h-12 mx-auto rounded-xl bg-slate-100 flex items-center justify-center text-slate-500">
               <Smartphone className="w-6 h-6" />
             </div>
-            <div>
-              <h3 className="text-sm font-bold text-slate-800">Aplikasi Mobile</h3>
-              <p className="text-xs text-slate-400 mt-0.5">Android / iOS</p>
-            </div>
-
-            {!isReadyForHubstaff ? (
-              <button
-                type="button"
-                disabled
-                className="w-full max-w-xs mx-auto py-2.5 px-4 rounded-xl bg-slate-100 text-slate-400 font-bold text-xs flex items-center justify-center gap-2 cursor-not-allowed"
-              >
-                <Lock className="w-3.5 h-3.5" />
-                <span>Terkunci</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={handleOpenMobile}
-                className="w-full max-w-xs mx-auto py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition-colors"
-              >
-                <Unlock className="w-3.5 h-3.5" />
-                <span>Buka di Mobile</span>
-              </button>
-            )}
+            <h3 className="text-sm font-bold text-slate-800">Aplikasi Mobile</h3>
+            <span className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-100 text-slate-400 font-bold text-xs">
+              <Lock className="w-3.5 h-3.5" />
+              <span>Segera Hadir</span>
+            </span>
           </div>
-        </div>
-
-        {/* Footer Card 2: Buka Hubstaff di Browser */}
-        <div className="pt-2 border-t border-slate-100 space-y-2">
-          <p className="text-xs text-slate-500 flex items-center gap-1.5">
-            <span className="text-slate-400">ⓘ</span>
-            <span>Jika aplikasi tidak terbuka otomatis, gunakan Hubstaff web:</span>
-          </p>
-          <a
-            href="https://app.hubstaff.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-semibold text-xs transition-all shadow-2xs"
-          >
-            <ExternalLink className="w-3.5 h-3.5 text-slate-500" />
-            <span>Buka Hubstaff di Browser</span>
-          </a>
         </div>
       </div>
 
-      {/* CARD 3: CARA MENGGUNAKAN HUBSTAFF */}
+      {/* CARD 4: CARA MENGGUNAKAN */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 space-y-5">
         <div className="flex items-center gap-2 text-slate-900 font-bold text-sm">
           <HelpCircle className="w-4 h-4 text-blue-600" />
@@ -421,102 +531,22 @@ export const HubstaffView: React.FC<HubstaffViewProps> = ({ onNavigate }) => {
         </div>
 
         <ol className="space-y-3.5 text-xs text-slate-700">
-          <li className="flex items-start gap-3">
-            <span className="w-5 h-5 rounded-full bg-blue-600 text-white font-bold text-[11px] flex items-center justify-center shrink-0 mt-0.5">
-              1
-            </span>
-            <span className="leading-relaxed">Buka aplikasi Hubstaff di laptop atau HP Anda</span>
-          </li>
-
-          <li className="flex items-start gap-3">
-            <span className="w-5 h-5 rounded-full bg-blue-600 text-white font-bold text-[11px] flex items-center justify-center shrink-0 mt-0.5">
-              2
-            </span>
-            <span className="leading-relaxed">Pilih project / organisasi Luzie Group</span>
-          </li>
-
-          <li className="flex items-start gap-3">
-            <span className="w-5 h-5 rounded-full bg-blue-600 text-white font-bold text-[11px] flex items-center justify-center shrink-0 mt-0.5">
-              3
-            </span>
-            <span className="leading-relaxed">Mulai timer (tracking) sebelum mengerjakan to-do list</span>
-          </li>
-
-          <li className="flex items-start gap-3">
-            <span className="w-5 h-5 rounded-full bg-blue-600 text-white font-bold text-[11px] flex items-center justify-center shrink-0 mt-0.5">
-              4
-            </span>
-            <span className="leading-relaxed">Pastikan timer tetap berjalan selama jam kerja WFA berlangsung</span>
-          </li>
-
-          <li className="flex items-start gap-3">
-            <span className="w-5 h-5 rounded-full bg-blue-600 text-white font-bold text-[11px] flex items-center justify-center shrink-0 mt-0.5">
-              5
-            </span>
-            <span className="leading-relaxed">
-              Hentikan timer saat istirahat siang (12:00 WIB) dan saat selesai kerja (17:00 WIB)
-            </span>
-          </li>
+          {[
+            'Selesaikan absen pagi dan to-do list terlebih dahulu di halaman ini',
+            'Tekan "Mulai" untuk memulai time tracking sebelum mengerjakan tugas',
+            'Biarkan aplikasi WFA System tetap terbuka selama bekerja (boleh di-minimize)',
+            'Tekan "Jeda" saat istirahat, "Lanjut" saat mulai kerja lagi',
+            'Tekan "Selesai" saat benar-benar berhenti kerja untuk hari ini',
+          ].map((step, i) => (
+            <li key={i} className="flex items-start gap-3">
+              <span className="w-5 h-5 rounded-full bg-blue-600 text-white font-bold text-[11px] flex items-center justify-center shrink-0 mt-0.5">
+                {i + 1}
+              </span>
+              <span className="leading-relaxed">{step}</span>
+            </li>
+          ))}
         </ol>
       </div>
-
-      {/* Modal Dialog Peluncuran Hubstaff Desktop/Mobile */}
-      {showLaunchModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-5 animate-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                {showLaunchModal === 'desktop' ? (
-                  <Laptop className="w-5 h-5 text-blue-600" />
-                ) : (
-                  <Smartphone className="w-5 h-5 text-blue-600" />
-                )}
-                <span>
-                  {showLaunchModal === 'desktop' ? 'Membuka Hubstaff Desktop' : 'Hubstaff Mobile'}
-                </span>
-              </h3>
-              <button
-                onClick={() => setShowLaunchModal(null)}
-                className="text-slate-400 hover:text-slate-600 text-sm font-bold"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-3 text-xs text-slate-600">
-              <p>
-                Permintaan peluncuran aplikasi Hubstaff telah dikirim ke sistem operasi Anda.
-              </p>
-              <div className="p-3 bg-blue-50 rounded-xl border border-blue-100 text-blue-900">
-                <div className="font-bold">Organisasi Terhubung:</div>
-                <div>Luzie Group &bull; Divisi {currentUser.division}</div>
-                <div className="mt-1 text-[11px] text-blue-700">Akun: {currentUser.email}</div>
-              </div>
-              <p className="text-[11px] text-slate-500">
-                Jika aplikasi belum terinstall, Anda dapat mengunduhnya langsung dari situs resmi Hubstaff atau mengakses via web browser.
-              </p>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
-              <a
-                href="https://app.hubstaff.com"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1.5"
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-                <span>Buka Hubstaff Web</span>
-              </a>
-              <button
-                onClick={() => setShowLaunchModal(null)}
-                className="px-4 py-2 rounded-xl border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-50"
-              >
-                Tutup
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
