@@ -170,6 +170,12 @@ const MainApp: React.FC = () => {
           {/* KARYAWAN VIEWS (Sesuai Persis 3 Screenshot Referensi) */}
           {currentUser.role === 'karyawan' && (
             <>
+              {/* Hubstaff sengaja TETAP TERPASANG (hanya disembunyikan) saat menu lain dibuka, supaya
+                  timer tracking tidak berhenti ketika karyawan pindah menu. Diletakkan paling atas
+                  agar spasi antar-konten tidak berubah saat disembunyikan. */}
+              <div hidden={activeMenu !== 'hubstaff'}>
+                <HubstaffView onNavigate={(m) => setActiveMenu(m)} />
+              </div>
               {activeMenu === 'beranda-saya' && (
                 <BerandaSayaView onNavigate={(m) => setActiveMenu(m)} />
               )}
@@ -178,9 +184,6 @@ const MainApp: React.FC = () => {
               )}
               {activeMenu === 'todo-saya' && (
                 <TodoListKaryawanView onNavigate={(m) => setActiveMenu(m)} />
-              )}
-              {activeMenu === 'hubstaff' && (
-                <HubstaffView onNavigate={(m) => setActiveMenu(m)} />
               )}
               {activeMenu === 'notifikasi' && (
                 <NotifikasiView onNavigate={(m) => setActiveMenu(m)} />
