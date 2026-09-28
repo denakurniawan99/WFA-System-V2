@@ -34,6 +34,72 @@ const REQUIRE_DESKTOP_FOR_TRACKING = false;
 const isDesktopApp =
   typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || 'isTauri' in window);
 
+/* ------------------------------------------------------------------------------------------
+ * Penghitung waktu tracking.
+ * Waktu dihitung dari SELISIH JAM DINDING (Date.now), bukan dengan menambah 1 tiap detik,
+ * karena browser/aplikasi desktop memperlambat timer saat window di-minimize atau tertutup
+ * aplikasi lain (menambah 1 per detik akan membuat jam kerja tercatat kurang).
+ * Status "sedang berjalan" juga disimpan di penyimpanan lokal supaya refresh / buka-tutup
+ * aplikasi yang singkat tidak menghentikan timer.
+ * ------------------------------------------------------------------------------------------ */
+const TIMER_STORAGE_PREFIX = 'wfa_hubstaff_timer_';
+
+/** Kalau halaman dimuat ulang dalam rentang ini sejak terakhir aktif, timer dianggap masih
+ *  berjalan dan dilanjutkan. Lebih lama dari ini (mis. laptop mati), waktu hanya dihitung
+ *  sampai terakhir aktif dan timer berhenti. */
+const RESUME_WINDOW_MS = 120_000;
+
+interface StoredTimer {
+  base: number;
+  runStart: number | null;
+  lastSeen: number;
+}
+
+interface RestoredTimer {
+  base: number;
+  runStart: number | null;
+  resumed: boolean;
+  expired: boolean;
+}
+
+const readStoredTimer = (entryId: string): StoredTimer | null => {
+  try {
+    const raw = localStorage.getItem(TIMER_STORAGE_PREFIX + entryId);
+    if (!raw) return null;
+    const v = JSON.parse(raw);
+    if (typeof v?.base !== 'number' || typeof v?.lastSeen !== 'number') return null;
+    return { base: v.base, runStart: typeof v.runStart === 'number' ? v.runStart : null, lastSeen: v.lastSeen };
+  } catch {
+    return null;
+  }
+};
+
+const writeStoredTimer = (entryId: string, value: StoredTimer) => {
+  try {
+    localStorage.setItem(TIMER_STORAGE_PREFIX + entryId, JSON.stringify(value));
+  } catch {
+    // penyimpanan lokal tidak tersedia — timer tetap jalan, hanya tidak bisa dilanjutkan setelah refresh
+  }
+};
+
+const totalSecondsOf = (base: number, runStart: number | null): number =>
+  base + (runStart === null ? 0 : Math.max(0, Math.floor((Date.now() - runStart) / 1000)));
+
+const restoreTimer = (entryId: string, savedSeconds: number, now: number = Date.now()): RestoredTimer => {
+  const stored = readStoredTimer(entryId);
+  if (!stored) return { base: savedSeconds, runStart: null, resumed: false, expired: false };
+  if (stored.runStart === null) {
+    return { base: Math.max(stored.base, savedSeconds), runStart: null, resumed: false, expired: false };
+  }
+  // Timer masih berstatus "berjalan" saat halaman ditutup / dimuat ulang.
+  if (now - stored.lastSeen <= RESUME_WINDOW_MS) {
+    const total = Math.max(stored.base + Math.max(0, Math.floor((now - stored.runStart) / 1000)), savedSeconds);
+    return { base: total, runStart: now, resumed: true, expired: false };
+  }
+  const total = Math.max(stored.base + Math.max(0, Math.floor((stored.lastSeen - stored.runStart) / 1000)), savedSeconds);
+  return { base: total, runStart: null, resumed: false, expired: true };
+};
+
 interface HubstaffViewProps {
   onNavigate?: (menu: SidebarMenuId) => void;
 }
@@ -52,35 +118,102 @@ export const HubstaffView: React.FC<HubstaffViewProps> = ({ onNavigate }) => {
   // Sumber kebenaran total waktu tracking adalah entry.hubstaffSeconds di Firebase (per akun,
   // per TANGGAL — jadi otomatis "reset" tiap hari karena entry-nya sendiri per-tanggal, dan
   // otomatis TERSINKRON ke semua perangkat sehingga bisa dilihat lagi lewat Riwayat Absen).
-  const [isTracking, setIsTracking] = useState(false);
-  const [trackedSeconds, setTrackedSeconds] = useState(entry.hubstaffSeconds || 0);
+  const initRef = React.useRef<RestoredTimer | null>(null);
+  if (initRef.current === null) {
+    initRef.current = restoreTimer(entry.id, entry.hubstaffSeconds || 0);
+  }
+  const init = initRef.current;
+
+  // baseRef = total detik sampai awal sesi jalan saat ini; runStartRef = jam dinding saat sesi
+  // jalan dimulai (null kalau sedang jeda). Total saat ini = base + selisih jam dinding.
+  const baseRef = React.useRef(init.base);
+  const runStartRef = React.useRef<number | null>(init.runStart);
+  const [isTracking, setIsTracking] = useState(init.runStart !== null);
+  const [trackedSeconds, setTrackedSeconds] = useState(init.base);
   const [showLaunchModal, setShowLaunchModal] = useState<string | null>(null);
 
-  const trackedSecondsRef = React.useRef(trackedSeconds);
-  trackedSecondsRef.current = trackedSeconds;
   const entryIdRef = React.useRef(entry.id);
   const prevAbsenSiangRef = React.useRef(isAbsenSiangDone);
+  const noticeShownRef = React.useRef(false);
+
+  const getTotalNow = () => totalSecondsOf(baseRef.current, runStartRef.current);
+  const persistTimer = () =>
+    writeStoredTimer(entryIdRef.current, {
+      base: baseRef.current,
+      runStart: runStartRef.current,
+      lastSeen: Date.now(),
+    });
+
+  const startRunning = () => {
+    baseRef.current = getTotalNow();
+    runStartRef.current = Date.now();
+    persistTimer();
+    setTrackedSeconds(baseRef.current);
+    setIsTracking(true);
+  };
+
+  const stopRunning = (): number => {
+    const total = getTotalNow();
+    baseRef.current = total;
+    runStartRef.current = null;
+    persistTimer();
+    setTrackedSeconds(total);
+    setIsTracking(false);
+    return total;
+  };
 
   // Kalau entry berganti (hari baru / user lain), muat ulang total tersimpan & hentikan timer.
   useEffect(() => {
     if (entryIdRef.current !== entry.id) {
       entryIdRef.current = entry.id;
+      baseRef.current = entry.hubstaffSeconds || 0;
+      runStartRef.current = null;
       setTrackedSeconds(entry.hubstaffSeconds || 0);
       setIsTracking(false);
+    } else if (runStartRef.current === null && (entry.hubstaffSeconds || 0) > baseRef.current) {
+      // Data di Firebase lebih besar (mis. dari perangkat lain / baru selesai dimuat) — ikuti.
+      baseRef.current = entry.hubstaffSeconds || 0;
+      setTrackedSeconds(baseRef.current);
     }
   }, [entry.id, entry.hubstaffSeconds]);
 
-  // Detak per detik saat tracking aktif
+  // Pemberitahuan sekali saat halaman dimuat: timer dilanjutkan / dihentikan otomatis.
   useEffect(() => {
-    let interval: ReturnType<typeof setInterval> | null = null;
-    if (isTracking) {
-      interval = setInterval(() => {
-        setTrackedSeconds((prev) => prev + 1);
-      }, 1000);
+    if (noticeShownRef.current) return;
+    noticeShownRef.current = true;
+    if (init.expired) {
+      persistTimer();
+      updateHubstaffSeconds(baseRef.current);
+      showToast('Timer dihentikan otomatis karena aplikasi tidak aktif lebih dari 2 menit. Waktu dihitung sampai terakhir aktif.', 'info');
+    } else if (init.resumed) {
+      persistTimer();
+      showToast('Timer dilanjutkan otomatis setelah halaman dimuat ulang.', 'info');
     }
-    return () => {
-      if (interval) clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Perbarui tampilan tiap detik saat tracking aktif. Nilainya dihitung dari jam dinding, jadi
+  // tetap benar walau detak timer diperlambat; dihitung ulang juga saat window kembali terlihat.
+  useEffect(() => {
+    if (!isTracking) return;
+    const tick = () => {
+      setTrackedSeconds(getTotalNow());
+      persistTimer();
     };
+    const onVisible = () => {
+      if (!document.hidden) tick();
+    };
+    const interval = setInterval(tick, 1000);
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', tick);
+    window.addEventListener('pagehide', persistTimer);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', tick);
+      window.removeEventListener('pagehide', persistTimer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isTracking]);
 
   // Sinkron berkala ke Firebase (tiap 10 detik) selagi tracking aktif, supaya progress
@@ -88,7 +221,7 @@ export const HubstaffView: React.FC<HubstaffViewProps> = ({ onNavigate }) => {
   useEffect(() => {
     if (!isTracking) return;
     const syncInterval = setInterval(() => {
-      updateHubstaffSeconds(trackedSecondsRef.current);
+      updateHubstaffSeconds(getTotalNow());
     }, 10000);
     return () => clearInterval(syncInterval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -98,18 +231,21 @@ export const HubstaffView: React.FC<HubstaffViewProps> = ({ onNavigate }) => {
   // sesi kerja WFA hari itu) — sekaligus simpan total akhirnya ke Firebase.
   useEffect(() => {
     if (!prevAbsenSiangRef.current && isAbsenSiangDone && isTracking) {
-      setIsTracking(false);
-      updateHubstaffSeconds(trackedSecondsRef.current);
+      updateHubstaffSeconds(stopRunning());
       showToast('Absen siang tercatat — timer Hubstaff otomatis dihentikan.', 'info');
     }
     prevAbsenSiangRef.current = isAbsenSiangDone;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAbsenSiangDone]);
 
-  // Simpan progress terakhir saat halaman ditinggalkan (best-effort)
+  // Simpan progress terakhir saat halaman ditinggalkan (best-effort). Meninggalkan halaman
+  // Hubstaff = timer jeda (perilaku yang sudah ada); penanda "berhenti" ditulis supaya tidak
+  // terbaca sebagai timer yang masih berjalan saat halaman dibuka lagi.
   useEffect(() => {
     return () => {
-      updateHubstaffSeconds(trackedSecondsRef.current);
+      const total = getTotalNow();
+      writeStoredTimer(entryIdRef.current, { base: total, runStart: null, lastSeen: Date.now() });
+      updateHubstaffSeconds(total);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -131,11 +267,10 @@ export const HubstaffView: React.FC<HubstaffViewProps> = ({ onNavigate }) => {
       return;
     }
     if (!isTracking) {
-      setIsTracking(true);
+      startRunning();
       showToast('Timer Hubstaff dimulai! Time tracking aktif.', 'success');
     } else {
-      setIsTracking(false);
-      updateHubstaffSeconds(trackedSecondsRef.current);
+      updateHubstaffSeconds(stopRunning());
       showToast('Timer Hubstaff dijeda sementara.', 'info');
     }
   };
