@@ -108,6 +108,11 @@ export const HubstaffView: React.FC<HubstaffViewProps> = ({ onNavigate }) => {
   const { currentUser, getCurrentEntry, doAbsenPagi, updateHubstaffSeconds, showToast } = useApp();
   const entry = getCurrentEntry();
 
+  // Komponen ini kini tetap terpasang sepanjang sesi kerja (lihat App.tsx), jadi efek/interval
+  // di bawah harus selalu memanggil versi TERBARU fungsi penyimpan, bukan salinan usang.
+  const updateSecondsRef = React.useRef(updateHubstaffSeconds);
+  updateSecondsRef.current = updateHubstaffSeconds;
+
   // Status kelengkapan persiapan kerja
   const isAbsenPagiDone = !!entry.absenPagi;
   const isAbsenSiangDone = !!entry.absenSiang;
@@ -183,7 +188,7 @@ export const HubstaffView: React.FC<HubstaffViewProps> = ({ onNavigate }) => {
     noticeShownRef.current = true;
     if (init.expired) {
       persistTimer();
-      updateHubstaffSeconds(baseRef.current);
+      updateSecondsRef.current(baseRef.current);
       showToast('Timer dihentikan otomatis karena aplikasi tidak aktif lebih dari 2 menit. Waktu dihitung sampai terakhir aktif.', 'info');
     } else if (init.resumed) {
       persistTimer();
@@ -221,7 +226,7 @@ export const HubstaffView: React.FC<HubstaffViewProps> = ({ onNavigate }) => {
   useEffect(() => {
     if (!isTracking) return;
     const syncInterval = setInterval(() => {
-      updateHubstaffSeconds(getTotalNow());
+      updateSecondsRef.current(getTotalNow());
     }, 10000);
     return () => clearInterval(syncInterval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -231,7 +236,7 @@ export const HubstaffView: React.FC<HubstaffViewProps> = ({ onNavigate }) => {
   // sesi kerja WFA hari itu) — sekaligus simpan total akhirnya ke Firebase.
   useEffect(() => {
     if (!prevAbsenSiangRef.current && isAbsenSiangDone && isTracking) {
-      updateHubstaffSeconds(stopRunning());
+      updateSecondsRef.current(stopRunning());
       showToast('Absen siang tercatat — timer Hubstaff otomatis dihentikan.', 'info');
     }
     prevAbsenSiangRef.current = isAbsenSiangDone;
@@ -245,7 +250,7 @@ export const HubstaffView: React.FC<HubstaffViewProps> = ({ onNavigate }) => {
     return () => {
       const total = getTotalNow();
       writeStoredTimer(entryIdRef.current, { base: total, runStart: null, lastSeen: Date.now() });
-      updateHubstaffSeconds(total);
+      updateSecondsRef.current(total);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -270,7 +275,7 @@ export const HubstaffView: React.FC<HubstaffViewProps> = ({ onNavigate }) => {
       startRunning();
       showToast('Timer Hubstaff dimulai! Time tracking aktif.', 'success');
     } else {
-      updateHubstaffSeconds(stopRunning());
+      updateSecondsRef.current(stopRunning());
       showToast('Timer Hubstaff dijeda sementara.', 'info');
     }
   };
