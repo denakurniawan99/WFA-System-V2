@@ -23,7 +23,7 @@ import { SidebarMenuId } from './Sidebar';
 
 /** Link download installer aplikasi desktop WFA System (mis. link Google Drive).
  *  Tempel link di antara tanda kutip. Selama masih kosong, tidak ada yang berubah di tampilan. */
-const DESKTOP_DOWNLOAD_URL = '';
+const DESKTOP_DOWNLOAD_URL = 'https://drive.google.com/file/d/1ri3rOKFBw2kvz1ABdCpayxxmRuTLYGoL/view?usp=sharing';
 
 /** false = tracking tetap bisa dimulai dari browser seperti biasa (hanya muncul anjuran
  *  install aplikasi desktop). Ubah jadi true kalau installer sudah dibagikan ke karyawan
