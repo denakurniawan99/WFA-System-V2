@@ -13,3 +13,6 @@ src-tauri/gen/
 # Lain-lain
 *.log
 .DS_Store
+# Kunci penandatangan update desktop (RAHASIA - jangan pernah di-upload)
+*.key
+*.key.pub
