@@ -1,0 +1,11 @@
+{
+  "version": "1.0.1",
+  "notes": "Hemat kuota data, tombol Refresh, rincian Mouse dan Keyboard",
+  "pub_date": "2026-10-06T03:16:24.614Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTMmJZajlHbmx2aXVVOVE3VU14YytTZE9QZHlBay9UZkR0d1FyM0dHZ0Y0YUQ3WHVLbjBRR0JwKzFkRWRlaER5emNpdzd5ZDJhUE8wdGZQeWp4STZNZE5GSjE1Smw1dVFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMjU2MDk3CWZpbGU6V0ZBIFN5c3RlbV8xLjAuMV94NjQtc2V0dXAuZXhlCXZlcnNpb246MS4wLjEKa3BiYkRSVzIyckFGaEZCZ0c4Sk5IbUphWm5ZN3lLUWxobDlObDF4V3ROSmJrb000cEViNVFRZGRsSTAxbHh1eGFQWkswWElBeTFzNjhPZTY1cUFoQnc9PQo=",
+      "url": "https://wfa-system-v2-nine.vercel.app/updates/wfa-system_1.0.1_x64-setup.exe"
+    }
+  }
+}

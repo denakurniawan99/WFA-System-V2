@@ -1,0 +1,1 @@
+import{i}from"./index-DZm8bpCi.js";import"./charts-Dmo9INGN.js";import"./firebase-CMgnfI5v.js";async function a(t=0){await i("plugin:process|exit",{code:t})}async function e(){await i("plugin:process|restart")}export{a as exit,e as relaunch};
