@@ -88,9 +88,8 @@ async function loadPairing() {
 async function fetchStatus() {
   if (!pairing) return { tracking: false, urlTrackingOn: false, date: null };
   try {
-    const res = await fetch(
-      `${WFA_CONFIG.DATABASE_URL}/${WFA_CONFIG.DB_ROOT}/trackingStatus/${pairing.userId}.json`
-    );
+    const db = await wfaGetDb();
+    const res = await fetch(`${db.databaseUrl}/${db.dbRoot}/trackingStatus/${pairing.userId}.json`);
     const data = (await res.json()) || {};
     return {
       tracking: !!data.tracking,
@@ -185,11 +184,12 @@ async function flush() {
   if (queue.length === 0) return;
   const batch = queue;
   queue = [];
+  const db = await wfaGetDb();
   for (const item of batch) {
     try {
       const safeUid = String(item.userId).replace(/[.#$/\[\]]/g, '_');
       await fetch(
-        `${WFA_CONFIG.DATABASE_URL}/${WFA_CONFIG.DB_ROOT}/urlActivity/${item.date}/${safeUid}/visits/${item.visitId}.json`,
+        `${db.databaseUrl}/${db.dbRoot}/urlActivity/${item.date}/${safeUid}/visits/${item.visitId}.json`,
         {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },

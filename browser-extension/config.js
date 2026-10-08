@@ -15,3 +15,42 @@ const WFA_CONFIG = {
    */
   DEFAULT_APP_ORIGIN: 'https://wfa-system-v2-nine.vercel.app',
 };
+
+/**
+ * Alamat database TERBARU: dibaca dari config.json di alamat web WFA System (sama seperti yang
+ * dipakai aplikasi), jadi saat admin pindah project Firebase ekstensi ikut pindah tanpa dipasang
+ * ulang. Gagal mengambil -> pakai salinan terakhir yang berhasil -> pakai nilai di atas.
+ */
+async function wfaGetDb() {
+  const fallback = { databaseUrl: WFA_CONFIG.DATABASE_URL, dbRoot: WFA_CONFIG.DB_ROOT };
+  try {
+    const { appOrigin, remoteDb } = await chrome.storage.local.get(['appOrigin', 'remoteDb']);
+    const origin = String(appOrigin || WFA_CONFIG.DEFAULT_APP_ORIGIN || '').trim().replace(/\/+$/, '');
+    // Pakai hasil ambil terakhir selama < 5 menit supaya tidak mengambil tiap permintaan
+    if (remoteDb && Date.now() - remoteDb.at < 5 * 60 * 1000) return remoteDb.value;
+    if (/^https?:\/\//.test(origin)) {
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 3000);
+        const res = await fetch(origin + '/config.json', { cache: 'no-store', signal: ctrl.signal });
+        clearTimeout(timer);
+        if (res.ok) {
+          const j = await res.json();
+          const url = String(j?.firebase?.databaseURL || '').replace(/\/+$/, '');
+          const root = String(j?.dbRoot || '').replace(/^\/+|\/+$/g, '');
+          if (/^https:\/\/.+\.(firebasedatabase\.app|firebaseio\.com)$/i.test(url) && /^[A-Za-z0-9_-]{1,60}$/.test(root)) {
+            const value = { databaseUrl: url, dbRoot: root };
+            await chrome.storage.local.set({ remoteDb: { value, at: Date.now() } });
+            return value;
+          }
+        }
+      } catch (e) {
+        // jaringan/CORS gagal — lanjut ke salinan terakhir
+      }
+    }
+    if (remoteDb && remoteDb.value) return remoteDb.value;
+  } catch (e) {
+    // abaikan
+  }
+  return fallback;
+}

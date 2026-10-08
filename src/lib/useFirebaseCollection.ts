@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { dbRef, onValue, update, set, get, cleanForFirebase, type Query } from './firebase';
+import { getRuntimeConfig } from './runtimeConfig';
 
 /**
  * Sinkronisasi koleksi (kumpulan item ber-`id`) dengan Firebase Realtime Database.
@@ -99,7 +100,7 @@ export function useFirebaseCollection<T extends { id: string }>({
   buildQuery,
   enabled = true,
 }: Options<T>) {
-  const cacheKey = `wfa_cache_${path}`;
+  const cacheKey = `wfa_cache_${getRuntimeConfig().firebase.projectId}_${path}`;
   const [items, setItemsState] = useState<T[]>(() => readCache<T>(cacheKey));
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -208,7 +209,7 @@ export function useFirebaseCollection<T extends { id: string }>({
 
 /** Sinkronisasi satu nilai/objek tunggal (mis. pengaturan sistem). */
 export function useFirebaseValue<T extends object>(path: string, defaults: T) {
-  const cacheKey = `wfa_cache_${path}`;
+  const cacheKey = `wfa_cache_${getRuntimeConfig().firebase.projectId}_${path}`;
   const [value, setValueState] = useState<T>(() => {
     try {
       const raw = localStorage.getItem(cacheKey);

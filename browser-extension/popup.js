@@ -12,7 +12,8 @@ document.getElementById('opts').addEventListener('click', (e) => {
     return;
   }
   try {
-    const res = await fetch(`${WFA_CONFIG.DATABASE_URL}/${WFA_CONFIG.DB_ROOT}/trackingStatus/${userId}.json`);
+    const db = await wfaGetDb();
+    const res = await fetch(`${db.databaseUrl}/${db.dbRoot}/trackingStatus/${userId}.json`);
     const data = (await res.json()) || {};
     const on = !!(data.tracking && data.urlTrackingOn);
     dot.classList.toggle('on', on);

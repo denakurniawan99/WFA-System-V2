@@ -1,9 +1,8 @@
 /**
  * Konfigurasi Firebase Realtime Database.
  *
- * Nilai default disamakan dengan project referensi (WFA-System-V2 → wfa-system-v3)
- * sehingga aplikasi langsung tersambung tanpa setup tambahan. Untuk memakai project
- * Firebase lain cukup isi variabel VITE_FIREBASE_* di file .env (lihat .env.example).
+ * Alamat database dibaca dari public/config.json saat aplikasi dibuka (lib/runtimeConfig.ts),
+ * jadi pindah project Firebase cukup mengganti file itu — tanpa build ulang.
  *
  * Catatan: apiKey Firebase untuk aplikasi web memang bersifat publik. Keamanan data
  * diatur lewat Realtime Database Rules (lihat database.rules.json), bukan dengan
@@ -27,20 +26,11 @@ import {
   type DatabaseReference,
   type Query,
 } from 'firebase/database';
+import { getRuntimeConfig } from './runtimeConfig';
 
-const env = import.meta.env;
-
-const firebaseConfig = {
-  apiKey: env.VITE_FIREBASE_API_KEY || 'AIzaSyAxPObCVrd2adpivs2iNGluozqtY1seoqA',
-  authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || 'wfa-system-v3.firebaseapp.com',
-  databaseURL:
-    env.VITE_FIREBASE_DATABASE_URL ||
-    'https://wfa-system-v3-default-rtdb.asia-southeast1.firebasedatabase.app',
-  projectId: env.VITE_FIREBASE_PROJECT_ID || 'wfa-system-v3',
-  storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || 'wfa-system-v3.firebasestorage.app',
-  messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || '315254355578',
-  appId: env.VITE_FIREBASE_APP_ID || '1:315254355578:web:9a4b4a01055ecd0ddd2dc3',
-};
+// Nilai diambil dari config.json (lihat lib/runtimeConfig.ts) — sudah final sebelum modul ini dimuat.
+const runtime = getRuntimeConfig();
+const firebaseConfig = runtime.firebase;
 
 const app = initializeApp(firebaseConfig);
 export const rtdb = getDatabase(app);
@@ -50,7 +40,7 @@ export const rtdb = getDatabase(app);
  * aplikasi V2 ("luzie") karena struktur datanya berbeda — supaya tidak saling menimpa
  * kalau keduanya memakai project Firebase yang sama.
  */
-export const DB_ROOT = (env.VITE_DB_ROOT || 'luzie-react').replace(/^\/+|\/+$/g, '');
+export const DB_ROOT = runtime.dbRoot;
 
 export const dbRef = (path: string): DatabaseReference => ref(rtdb, `${DB_ROOT}/${path}`);
 export const rootRef = (): DatabaseReference => ref(rtdb, DB_ROOT);

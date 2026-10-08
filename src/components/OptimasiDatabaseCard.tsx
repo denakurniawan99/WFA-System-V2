@@ -4,6 +4,7 @@ import { useApp } from '../context/AppContext';
 import { dbRef, rootRef, get, set, update } from '../lib/firebase';
 import { isInlineImage, makeImageRef, safeSegment } from '../lib/imageRef';
 import { shrinkDataUrl } from '../lib/image';
+import { getRuntimeConfig } from '../lib/runtimeConfig';
 
 const NODES = [
   'users',
@@ -150,6 +151,11 @@ export const OptimasiDatabaseCard: React.FC = () => {
             (hanya diunduh saat dilihat) dan memperkecil avatar. Aman dijalankan berulang. Keduanya mengunduh database SEKALI.
           </p>
         </div>
+      </div>
+
+      <div className="text-[11px] text-slate-500 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2">
+        Database aktif: <b className="text-slate-700">{getRuntimeConfig().firebase.projectId}</b> (root{' '}
+        <b className="text-slate-700">{getRuntimeConfig().dbRoot}</b>) · sumber: <b className="text-slate-700">{getRuntimeConfig().source}</b>
       </div>
 
       <div className="flex flex-wrap gap-2">
