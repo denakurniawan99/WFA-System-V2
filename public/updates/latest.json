@@ -1,0 +1,11 @@
+{
+  "version": "1.0.2",
+  "notes": "Konfigurasi database jarak jauh",
+  "pub_date": "2026-10-08T07:22:46.133Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTMmJZajlHbmx2aW5zYkg4STZidzR2dGRZclFkWWU4Z09xQWFrUy9UallHTFdEVUxvUTVaVzlRMmcvSldGOTNNYUZxZ3ZxMGR0Q1hHVkJUZFlKRmJQTVZMaWg5L0pxcUFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxNDQzNTI3CWZpbGU6V0ZBIFN5c3RlbV8xLjAuMl94NjQtc2V0dXAuZXhlCXZlcnNpb246MS4wLjIKNkxPblBGVWlhbTFBVG9jUFJkeXA0aW83KzEwck1YQllWcW9oMVluaVYyTkRjWDl1TWRJS0ZVblBBY1NqbThNblgzQ1Z1WVpCK1BBVWdrUmdlR29NREE9PQo=",
+      "url": "https://wfa-system-v2-nine.vercel.app/updates/wfa-system_1.0.2_x64-setup.exe"
+    }
+  }
+}
