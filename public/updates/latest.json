@@ -1,11 +1,11 @@
 {
-  "version": "1.0.2",
-  "notes": "Konfigurasi database jarak jauh",
-  "pub_date": "2026-10-08T07:22:46.133Z",
+  "version": "1.0.3",
+  "notes": "Perbaikan riwayat, absen tersimpan, timer lanjut otomatis",
+  "pub_date": "2026-10-12T03:50:10.432Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTMmJZajlHbmx2aW5zYkg4STZidzR2dGRZclFkWWU4Z09xQWFrUy9UallHTFdEVUxvUTVaVzlRMmcvSldGOTNNYUZxZ3ZxMGR0Q1hHVkJUZFlKRmJQTVZMaWg5L0pxcUFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxNDQzNTI3CWZpbGU6V0ZBIFN5c3RlbV8xLjAuMl94NjQtc2V0dXAuZXhlCXZlcnNpb246MS4wLjIKNkxPblBGVWlhbTFBVG9jUFJkeXA0aW83KzEwck1YQllWcW9oMVluaVYyTkRjWDl1TWRJS0ZVblBBY1NqbThNblgzQ1Z1WVpCK1BBVWdrUmdlR29NREE9PQo=",
-      "url": "https://wfa-system-v2-nine.vercel.app/updates/wfa-system_1.0.2_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTMmJZajlHbmx2aWhnb1oxczd1QkkwTTRqejFrb2NmQVY5dVdPc2Q1T3JXVWdiWHA5eFlHemZRNlpZcGs4VklSa0pwSk5sQW9uMGxQbDlDdmJoYkVaRStJeEhVODBCOUFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxNzc2OTcyCWZpbGU6V0ZBIFN5c3RlbV8xLjAuM194NjQtc2V0dXAuZXhlCXZlcnNpb246MS4wLjMKTnFMTE1xM0FlYWFYYjlCeHdFOUdVOVczR2lnSWtWMUdmbU1Md0NjTVh0blBSVzM2a1VsTDROWWtkaGhIWXVFZ0k0c2xGTlViRC9aYjhyWEpHZm1KRFE9PQo=",
+      "url": "https://wfa-system-v2-nine.vercel.app/updates/wfa-system_1.0.3_x64-setup.exe"
     }
   }
 }
