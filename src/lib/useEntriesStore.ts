@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
-import { dbRef, get, query, orderByKey, startAt, endAt, update } from './firebase';
-import { diffCollection } from './useFirebaseCollection';
+import { dbRef, get, query, orderByKey, startAt, endAt, update, cleanForFirebase } from './firebase';
+import { diffCollection, } from './useFirebaseCollection';
 
 /**
  * Penyimpanan `entries` (catatan harian) yang diambil SESUAI KEBUTUHAN.
@@ -26,11 +26,13 @@ export const entryKey = (userId: string, date: string) => `entry-${userId}-${dat
 interface Options<T> {
   normalize: (raw: any, id: string) => T;
   sort: (a: T, b: T) => number;
+  /** Dipanggil saat penulisan ke Firebase GAGAL (mis. ditolak server / koneksi). */
+  onWriteError?: (e: unknown) => void;
 }
 
 type E = { id: string; userId: string; date: string };
 
-export function useEntriesStore<T extends E>({ normalize, sort }: Options<T>) {
+export function useEntriesStore<T extends E>({ normalize, sort, onWriteError }: Options<T>) {
   const [items, setItemsState] = useState<T[]>([]);
   const itemsRef = useRef<T[]>(items);
   const coverage = useRef(new Map<string, Interval>());
@@ -40,6 +42,8 @@ export function useEntriesStore<T extends E>({ normalize, sort }: Options<T>) {
   const [error, setError] = useState<string | null>(null);
   const normalizeRef = useRef(normalize);
   const sortRef = useRef(sort);
+  const onWriteErrorRef = useRef(onWriteError);
+  onWriteErrorRef.current = onWriteError;
   normalizeRef.current = normalize;
   sortRef.current = sort;
 
@@ -124,16 +128,42 @@ export function useEntriesStore<T extends E>({ normalize, sort }: Options<T>) {
     return fresh;
   }, []);
 
-  const setItems = useCallback((updater: T[] | ((prev: T[]) => T[])) => {
+  /**
+   * Terapkan perubahan ke state lokal LALU tulis ke Firebase. Mengembalikan Promise yang selesai
+   * saat SERVER mengonfirmasi tulisan itu (reject kalau ditolak / gagal) — dipakai untuk
+   * memastikan data penting seperti absen benar-benar tersimpan.
+   */
+  const setItemsAck = useCallback((updater: T[] | ((prev: T[]) => T[])): Promise<void> => {
     const prev = itemsRef.current;
     const next = typeof updater === 'function' ? (updater as (p: T[]) => T[])(prev) : updater;
     const changes = diffCollection(prev, next, { nonDestructiveNew: true });
     commit(next);
-    if (Object.keys(changes).length === 0) return;
-    update(dbRef('entries'), changes).catch((e) => {
+    if (Object.keys(changes).length === 0) return Promise.resolve();
+    return update(dbRef('entries'), changes).catch((e) => {
       console.error('[Firebase] gagal menyimpan "entries":', e);
       setError(e?.message || 'Gagal menyimpan');
+      onWriteErrorRef.current?.(e);
+      throw e;
     });
+  }, []);
+
+  const setItems = useCallback(
+    (updater: T[] | ((prev: T[]) => T[])) => {
+      setItemsAck(updater).catch(() => undefined); // kegagalan sudah dilaporkan lewat onWriteError
+    },
+    [setItemsAck]
+  );
+
+  /** Tulis ulang field-field TERISI sebuah entry apa adanya (untuk mencoba lagi setelah gagal). Tidak menghapus apa pun di server. */
+  const rewriteEntry = useCallback((id: string): Promise<void> => {
+    const item = itemsRef.current.find((e) => e.id === id);
+    if (!item) return Promise.reject(new Error('Entry tidak ada di perangkat ini'));
+    const body: Record<string, unknown> = {};
+    Object.entries(item as Record<string, unknown>).forEach(([k, v]) => {
+      if (k === 'id' || v === undefined || v === null) return;
+      body[k] = cleanForFirebase(v);
+    });
+    return update(dbRef(`entries/${id}`), body);
   }, []);
 
   /** Kosongkan semua (saat ganti akun) supaya data akun sebelumnya tidak tertinggal di memori. */
@@ -145,5 +175,5 @@ export function useEntriesStore<T extends E>({ normalize, sort }: Options<T>) {
     setUpdatedAt(null);
   }, []);
 
-  return { items, setItems, ensure, refreshOne, reset, loading: pending > 0, updatedAt, error };
+  return { items, setItems, setItemsAck, rewriteEntry, ensure, refreshOne, reset, loading: pending > 0, updatedAt, error };
 }

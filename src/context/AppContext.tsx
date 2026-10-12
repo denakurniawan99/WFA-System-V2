@@ -263,7 +263,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // ---------- Data (tersinkron realtime dengan Firebase) ----------
   const users = useFirebaseCollection<User>({ path: 'users', normalize: normalizeUser, sort: sortUsers });
   // `users` & pengaturan kecil -> live. Sisanya diambil SESUAI KEBUTUHAN (lihat lib/useEntriesStore & mode 'once').
-  const entriesCol = useEntriesStore<DailyWfaEntry>({ normalize: normalizeEntry, sort: sortEntries });
+  const writeErrorRef = useRef<(e: unknown) => void>(() => undefined);
+  const entriesCol = useEntriesStore<DailyWfaEntry>({
+    normalize: normalizeEntry,
+    sort: sortEntries,
+    onWriteError: (e) => writeErrorRef.current(e),
+  });
   const [authReady, setAuthReady] = useState(false); // true setelah pengguna terautentikasi (memicu pengambilan pertama)
   const warningsCol = useFirebaseCollection<WarningItem>({
     path: 'warnings',
@@ -287,6 +292,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const allUsers = users.items;
   const setAllUsers = users.setItems;
   const entries = entriesCol.items;
+  const entriesRef = useRef(entries);
+  entriesRef.current = entries;
   const setEntries = entriesCol.setItems;
   const warnings = warningsCol.items;
   const setWarnings = warningsCol.setItems;
@@ -325,6 +332,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 4000);
   }, []);
+
+  // Kegagalan menyimpan ke server TIDAK boleh diam-diam: beri tahu pengguna (maks. 1x per 20 detik).
+  const lastWriteErrAt = useRef(0);
+  writeErrorRef.current = (e: unknown) => {
+    const now = Date.now();
+    if (now - lastWriteErrAt.current < 20000) return;
+    lastWriteErrAt.current = now;
+    const msg = String((e as any)?.message || e || '');
+    showToast(
+      /permission|denied/i.test(msg)
+        ? 'Perubahan DITOLAK server (izin database). Hubungi HRD/IT.'
+        : 'Perubahan belum tersimpan ke server (koneksi bermasalah). Jangan tutup aplikasi, coba lagi sebentar.',
+      'warning'
+    );
+  };
+
+  /** Pantau penyimpanan data penting (absen): beri peringatan kalau lambat, coba ulang 1x kalau gagal. */
+  const trackSave = (ack: Promise<void>, label: string, entryId: string) => {
+    let done = false;
+    const slow = setTimeout(() => {
+      if (!done) showToast(`${label} belum terkirim ke server (koneksi lambat/terputus). Jangan tutup aplikasi sampai muncul tanda "tersimpan".`, 'warning');
+    }, 6000);
+    const ok = () => {
+      done = true;
+      clearTimeout(slow);
+      showToast(`${label} tersimpan di server ✓`, 'success');
+    };
+    ack.then(ok).catch(() => {
+      clearTimeout(slow);
+      entriesCol
+        .rewriteEntry(entryId)
+        .then(ok)
+        .catch(() => {
+          done = true;
+          showToast(`${label} GAGAL tersimpan ke server. Muat ulang aplikasi lalu cek Riwayat; jika tidak ada, ulangi absen.`, 'warning');
+        });
+    });
+  };
 
   // Pesan jelas kalau Firebase menolak akses (biasanya karena Rules)
   const firebaseError = users.error || entriesCol.error || warningsCol.error || zoomCol.error;
@@ -794,6 +839,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // 1. Absen Pagi Karyawan
   const doAbsenPagi = (location: string, notes: string) => {
+    // Pengaman: absen yang sudah tercatat TIDAK boleh ditimpa (jam & status aslinya hilang kalau absen lagi)
+    const already = entriesRef.current.find((e) => e.userId === currentUser.id && e.date === selectedDate)?.absenPagi;
+    if (already) {
+      showToast(`Anda sudah absen pagi pukul ${already.time}. Absen tidak perlu diulang.`, 'info');
+      return;
+    }
     const now = new Date();
     const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')} WIB`;
     const [limitH, limitM] = (wfaSettings.morningAbsenTime || '08:30').split(':').map(Number);
@@ -807,7 +858,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       timestamp: Date.now(),
     };
 
-    setEntries((prev) => {
+    const ackPagi = entriesCol.setItemsAck((prev) => {
       const idx = prev.findIndex((e) => e.userId === currentUser.id && e.date === selectedDate);
       if (idx >= 0) {
         const updated = [...prev];
@@ -842,6 +893,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     });
 
+    trackSave(ackPagi, 'Absen pagi', `entry-${currentUser.id}-${selectedDate}`);
     showToast(`Absen Pagi berhasil (${record.status === 'terlambat' ? 'Terlambat' : 'Tepat Waktu'})`, 'success');
   };
 
@@ -995,6 +1047,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // 6. Absen Siang Karyawan (dilakukan setelah mencentang to-do)
   const doAbsenSiang = (location: string, notes: string) => {
+    const alreadyS = entriesRef.current.find((e) => e.userId === currentUser.id && e.date === selectedDate)?.absenSiang;
+    if (alreadyS) {
+      showToast(`Anda sudah absen siang pukul ${alreadyS.time}. Absen tidak perlu diulang.`, 'info');
+      return;
+    }
     const now = new Date();
     const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')} WIB`;
     const isLate = now.getHours() > 13 || (now.getHours() === 13 && now.getMinutes() > 30);
@@ -1007,7 +1064,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       timestamp: Date.now(),
     };
 
-    setEntries((prev) => {
+    let siangMissing = false;
+    const ackSiang = entriesCol.setItemsAck((prev) => {
       const idx = prev.findIndex((e) => e.userId === currentUser.id && e.date === selectedDate);
       if (idx >= 0) {
         const currentTodos = prev[idx].todos;
@@ -1023,9 +1081,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         };
         return updated;
       }
+      siangMissing = true;
       return prev;
     });
 
+    if (siangMissing) {
+      showToast('Data absen pagi hari ini belum termuat di perangkat ini, jadi absen siang TIDAK dicatat. Tekan Refresh lalu ulangi.', 'warning');
+      return;
+    }
+    trackSave(ackSiang, 'Absen siang', `entry-${currentUser.id}-${selectedDate}`);
     showToast('Absen Siang berhasil dicatat! Menunggu verifikasi Leader.', 'success');
   };
 

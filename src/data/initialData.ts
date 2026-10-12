@@ -35,6 +35,8 @@ export const INITIAL_HUBSTAFF_SETTINGS: HubstaffSettings = {
   heartbeatLostSeconds: 45,
   idleThresholdSeconds: 60,
   autoPauseOnIdle: true,
+  autoResumeOnActivity: true,
+  keepIdleOnAutoPause: true,
   idlePromptMinutes: 5,
   idleGraceSeconds: 60,
   screenshotCount: 1,

@@ -252,10 +252,24 @@ export const PengaturanHubstaffView: React.FC = () => {
             hint="Jika mati, idle hanya dicatat (memengaruhi persentase aktivitas) tanpa menjeda timer."
           />
           {f.autoPauseOnIdle && (
-            <div className="grid sm:grid-cols-2 gap-5">
-              <Num label="Munculkan pertanyaan setelah idle" value={f.idlePromptMinutes} min={1} max={60} unit="menit" onChange={(v) => set('idlePromptMinutes', v)} />
-              <Num label="Waktu menjawab sebelum dijeda" value={f.idleGraceSeconds} min={15} max={300} unit="detik" onChange={(v) => set('idleGraceSeconds', v)} />
-            </div>
+            <>
+              <div className="grid sm:grid-cols-2 gap-5">
+                <Num label="Munculkan pertanyaan setelah idle" value={f.idlePromptMinutes} min={1} max={60} unit="menit" onChange={(v) => set('idlePromptMinutes', v)} />
+                <Num label="Waktu menjawab sebelum dijeda" value={f.idleGraceSeconds} min={15} max={300} unit="detik" onChange={(v) => set('idleGraceSeconds', v)} />
+              </div>
+              <Toggle
+                checked={f.autoResumeOnActivity}
+                onChange={(v) => set('autoResumeOnActivity', v)}
+                label="Lanjutkan timer otomatis saat karyawan bergerak lagi"
+                hint="Setelah dijeda karena idle, timer jalan lagi begitu keyboard/mouse digerakkan — tanpa menekan Mulai manual."
+              />
+              <Toggle
+                checked={f.keepIdleOnAutoPause}
+                onChange={(v) => set('keepIdleOnAutoPause', v)}
+                label="Waktu idle sebelum jeda tetap dihitung sebagai idle"
+                hint="Aktif: menit idle tercatat sebagai idle (tampil di persentase aktivitas). Mati: menit idle itu dibuang dari total waktu."
+              />
+            </>
           )}
         </div>
       </Card>

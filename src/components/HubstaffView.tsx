@@ -210,6 +210,8 @@ export const HubstaffView: React.FC<HubstaffViewProps> = ({ onNavigate }) => {
   const promptShownAtRef = React.useRef<number | null>(null);
   const [activity, setActivity] = useState({ active: actRef.current.active, idle: actRef.current.idle });
   const [idlePrompt, setIdlePrompt] = useState<{ remaining: number } | null>(null);
+  // true = timer sedang dijeda OLEH sistem karena idle (bukan dijeda manual) -> boleh lanjut otomatis
+  const [autoPaused, setAutoPaused] = useState(false);
 
   const persistActivity = () => {
     try {
@@ -258,6 +260,7 @@ export const HubstaffView: React.FC<HubstaffViewProps> = ({ onNavigate }) => {
   };
 
   const startRunning = () => {
+    setAutoPaused(false);
     baseRef.current = getTotalNow();
     runStartRef.current = Date.now();
     persistTimer();
@@ -268,6 +271,7 @@ export const HubstaffView: React.FC<HubstaffViewProps> = ({ onNavigate }) => {
   };
 
   const stopRunning = (): number => {
+    setAutoPaused(false);
     const total = getTotalNow();
     baseRef.current = total;
     runStartRef.current = null;
@@ -288,6 +292,7 @@ export const HubstaffView: React.FC<HubstaffViewProps> = ({ onNavigate }) => {
       actRef.current = readActivity(entry.hubstaffActiveSeconds || 0, entry.hubstaffIdleSeconds || 0, entry.hubstaffAutoPauseCount || 0);
       setActivity({ active: actRef.current.active, idle: actRef.current.idle });
       setIdlePrompt(null);
+      setAutoPaused(false);
       promptShownAtRef.current = null;
     } else if (runStartRef.current === null && (entry.hubstaffSeconds || 0) > baseRef.current) {
       // Data di Firebase lebih besar (mis. dari perangkat lain / baru selesai dimuat) — ikuti.
@@ -383,24 +388,58 @@ export const HubstaffView: React.FC<HubstaffViewProps> = ({ onNavigate }) => {
 
   /** Jeda otomatis karena idle: buang waktu menganggur (sepanjang `gap` detik) dari total. */
   const autoPauseForIdle = (gap: number) => {
-    const total = Math.max(0, getTotalNow() - gap);
+    // Mode "hitung sebagai idle" (bawaan): menit idle tetap ada di total & tercatat sebagai idle.
+    // Mode lama: menit idle dibuang dari total, idle & aktif disesuaikan.
+    const keepIdle = hsRef.current.keepIdleOnAutoPause !== false;
+    const total = keepIdle ? getTotalNow() : Math.max(0, getTotalNow() - gap);
     baseRef.current = total;
     runStartRef.current = null;
     persistTimer();
     setTrackedSeconds(total);
     setIsTracking(false);
+    setAutoPaused(true);
     const a = actRef.current;
     const threshold = hsRef.current.idleThresholdSeconds;
-    a.idle = Math.max(0, a.idle - Math.max(0, gap - threshold));
-    a.active = Math.max(0, a.active - Math.min(gap, threshold));
+    if (!keepIdle) {
+      a.idle = Math.max(0, a.idle - Math.max(0, gap - threshold));
+      a.active = Math.max(0, a.active - Math.min(gap, threshold));
+    }
     a.pauses += 1;
     setActivity({ active: a.active, idle: a.idle });
     persistActivity();
     promptShownAtRef.current = null;
     setIdlePrompt(null);
     pushStats(false, total);
-    showToast(`Timer dijeda otomatis: tidak ada aktivitas. ${Math.round(gap / 60)} menit idle tidak dihitung.`, 'warning');
+    const resumeNote = hsRef.current.autoResumeOnActivity !== false ? ' Timer lanjut sendiri saat Anda bergerak lagi.' : ' Tekan Mulai untuk melanjutkan.';
+    showToast(
+      keepIdle
+        ? `Timer dijeda otomatis: tidak ada aktivitas. ${Math.round(gap / 60)} menit tercatat sebagai idle.${resumeNote}`
+        : `Timer dijeda otomatis: tidak ada aktivitas. ${Math.round(gap / 60)} menit idle tidak dihitung.${resumeNote}`,
+      'warning'
+    );
   };
+
+  // Setelah dijeda otomatis: pantau input; begitu ada gerakan keyboard/mouse, timer lanjut sendiri.
+  useEffect(() => {
+    if (!autoPaused || isTracking || !activityOn || hsRef.current.autoResumeOnActivity === false) return;
+    let cancelled = false;
+    const id = setInterval(async () => {
+      const idleSecs = await getSystemIdleSeconds();
+      if (cancelled || idleSecs === null || idleSecs >= 3) return; // belum ada gerakan baru
+      if (isAbsenSiangDone || !isReadyForHubstaff) {
+        setAutoPaused(false);
+        return;
+      }
+      startRunning(); // juga membersihkan penanda autoPaused
+      pushStats(true);
+      showToast('Aktivitas terdeteksi lagi — timer dilanjutkan otomatis.', 'success');
+    }, 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoPaused, isTracking, activityOn, isAbsenSiangDone]);
 
   // Hitung aktif vs idle dari input sistem operasi (aplikasi mana pun), tiap detik saat tracking.
   useEffect(() => {
@@ -485,6 +524,11 @@ export const HubstaffView: React.FC<HubstaffViewProps> = ({ onNavigate }) => {
   };
 
   const handleQuickAbsenPagi = () => {
+    if (entry.absenPagi) {
+      showToast(`Anda sudah absen pagi pukul ${entry.absenPagi.time}. Mengalihkan ke To-Do List...`, 'info');
+      setTimeout(() => onNavigate?.('todo-saya'), 800);
+      return;
+    }
     doAbsenPagi('Rumah (WFA)', 'Absen cepat via halaman persiapan Hubstaff');
     showToast('Absen pagi berhasil dicatat! Mengalihkan ke To-Do List...', 'success');
     setTimeout(() => {
@@ -939,8 +983,9 @@ export const HubstaffView: React.FC<HubstaffViewProps> = ({ onNavigate }) => {
             <div>
               <h3 className="text-base font-bold text-slate-900">Masih bekerja?</h3>
               <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
-                Tidak ada aktivitas keyboard/mouse selama beberapa menit. Timer akan dijeda otomatis dan waktu
-                idle tidak dihitung dalam <span className="font-bold">{idlePrompt.remaining} detik</span>.
+                Tidak ada aktivitas keyboard/mouse selama beberapa menit. Timer akan dijeda otomatis dalam{' '}
+                <span className="font-bold">{idlePrompt.remaining} detik</span>
+                {hubstaffSettings.autoResumeOnActivity !== false ? ' dan lanjut sendiri saat Anda bergerak lagi.' : '.'}
               </p>
             </div>
             <button

@@ -29,13 +29,13 @@ const env = import.meta.env;
 
 const BUILT_IN: Omit<RuntimeConfig, 'source'> = {
   firebase: {
-    apiKey: env.VITE_FIREBASE_API_KEY || 'AIzaSyAxPObCVrd2adpivs2iNGluozqtY1seoqA',
-    authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || 'wfa-system-v3.firebaseapp.com',
-    databaseURL: env.VITE_FIREBASE_DATABASE_URL || 'https://wfa-system-v3-default-rtdb.asia-southeast1.firebasedatabase.app',
-    projectId: env.VITE_FIREBASE_PROJECT_ID || 'wfa-system-v3',
-    storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || 'wfa-system-v3.firebasestorage.app',
-    messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || '315254355578',
-    appId: env.VITE_FIREBASE_APP_ID || '1:315254355578:web:9a4b4a01055ecd0ddd2dc3',
+    apiKey: env.VITE_FIREBASE_API_KEY || 'AIzaSyAm6jHM04W2vdopnMeYOseGm4F2d9OvoSY',
+    authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || 'wfa-system-v2.firebaseapp.com',
+    databaseURL: env.VITE_FIREBASE_DATABASE_URL || 'https://wfa-system-v2-default-rtdb.asia-southeast1.firebasedatabase.app',
+    projectId: env.VITE_FIREBASE_PROJECT_ID || 'wfa-system-v2',
+    storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || 'wfa-system-v2.firebasestorage.app',
+    messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || '97930001376',
+    appId: env.VITE_FIREBASE_APP_ID || '1:97930001376:web:1b04e66f5ea063346fc985',
   },
   dbRoot: env.VITE_DB_ROOT || 'luzie-react',
 };

@@ -184,6 +184,10 @@ export interface HubstaffSettings {
   idleThresholdSeconds: number;
   /** true = tanya "Masih bekerja?" lalu jeda otomatis; false = idle hanya dicatat */
   autoPauseOnIdle: boolean;
+  /** Setelah dijeda otomatis karena idle, timer lanjut sendiri begitu ada gerakan keyboard/mouse (tanpa menekan Mulai). */
+  autoResumeOnActivity: boolean;
+  /** true = waktu idle sebelum jeda otomatis TETAP dihitung sebagai idle; false = dibuang dari total waktu. */
+  keepIdleOnAutoPause: boolean;
   idlePromptMinutes: number;
   idleGraceSeconds: number;
 

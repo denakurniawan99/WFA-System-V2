@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { RefreshBar } from './RefreshBar';
 import { useApp, useEntriesRange, ALL_FROM, ALL_TO } from '../context/AppContext';
-import { monthRange, lastMonths, presetRange } from '../utils/dateRange';
+import { monthRange, lastMonths, presetRange, shiftDate } from '../utils/dateRange';
+import { getTodayDateString } from '../data/initialData';
 import { getFinalScore, getAbsenScore, weightsFromSettings } from '../utils/scoreUtils';
 import {
   TrendingUp,
@@ -35,9 +36,11 @@ export const PerformaKaryawanView: React.FC = () => {
 
   // Filter state
   const [filterMode, setFilterMode] = useState<'month' | 'range'>('month');
-  const [selectedMonth, setSelectedMonth] = useState<string>('2026-09');
-  const [startDate, setStartDate] = useState<string>('2026-09-01');
-  const [endDate, setEndDate] = useState<string>('2026-09-30');
+  // Default = bulan & tanggal HARI INI (bukan tanggal contoh yang tertanam di kode)
+  const today = getTodayDateString();
+  const [selectedMonth, setSelectedMonth] = useState<string>(today.substring(0, 7));
+  const [startDate, setStartDate] = useState<string>(`${today.substring(0, 7)}-01`);
+  const [endDate, setEndDate] = useState<string>(today);
   // Data diambil sesuai periode yang dipilih (tidak seluruh riwayat); tekan Refresh untuk data terbaru.
   const entriesRange = useMemo(
     () =>
@@ -201,18 +204,18 @@ export const PerformaKaryawanView: React.FC = () => {
   const applyPreset = (preset: 'this-month' | 'last-14' | 'last-30' | 'all') => {
     if (preset === 'this-month') {
       setFilterMode('month');
-      setSelectedMonth('2026-09');
+      setSelectedMonth(getTodayDateString().substring(0, 7));
     } else if (preset === 'all') {
       setFilterMode('month');
       setSelectedMonth('all');
     } else if (preset === 'last-14') {
       setFilterMode('range');
-      setStartDate('2026-09-03');
-      setEndDate('2026-09-17');
+      setStartDate(shiftDate(getTodayDateString(), -14));
+      setEndDate(getTodayDateString());
     } else if (preset === 'last-30') {
       setFilterMode('range');
-      setStartDate('2026-08-18');
-      setEndDate('2026-09-17');
+      setStartDate(shiftDate(getTodayDateString(), -30));
+      setEndDate(getTodayDateString());
     }
   };
 
@@ -371,7 +374,7 @@ export const PerformaKaryawanView: React.FC = () => {
             <button
               onClick={() => {
                 setFilterMode('month');
-                setSelectedMonth('2026-09');
+                setSelectedMonth(getTodayDateString().substring(0, 7));
               }}
               className="w-full text-xs font-semibold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 py-2 px-3 rounded-xl transition-colors flex items-center justify-center gap-1.5"
             >

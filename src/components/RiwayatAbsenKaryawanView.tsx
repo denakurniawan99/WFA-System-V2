@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { RefreshBar } from './RefreshBar';
 import { useApp, useEntriesRange, ALL_FROM, ALL_TO } from '../context/AppContext';
-import { monthRange, lastMonths, presetRange } from '../utils/dateRange';
+import { monthRange, lastMonths, presetRange, shiftDate } from '../utils/dateRange';
+import { getTodayDateString } from '../data/initialData';
 import { DailyWfaEntry, TodoItem } from '../types';
 import { getFinalScore, getAbsenScore, weightsFromSettings } from '../utils/scoreUtils';
 import {
@@ -30,9 +31,11 @@ export const RiwayatAbsenKaryawanView: React.FC = () => {
 
   // Filter state
   const [filterMode, setFilterMode] = useState<'month' | 'range'>('month');
-  const [selectedMonth, setSelectedMonth] = useState<string>('2026-09'); // YYYY-MM
-  const [startDate, setStartDate] = useState<string>('2026-09-01');
-  const [endDate, setEndDate] = useState<string>('2026-09-30');
+  // Default = bulan & tanggal HARI INI (bukan tanggal contoh yang tertanam di kode)
+  const today = getTodayDateString();
+  const [selectedMonth, setSelectedMonth] = useState<string>(today.substring(0, 7)); // YYYY-MM
+  const [startDate, setStartDate] = useState<string>(`${today.substring(0, 7)}-01`);
+  const [endDate, setEndDate] = useState<string>(today);
   // Data diambil sesuai periode yang dipilih (tidak seluruh riwayat); tekan Refresh untuk data terbaru.
   const entriesRange = useMemo(
     () =>
@@ -235,18 +238,18 @@ export const RiwayatAbsenKaryawanView: React.FC = () => {
   const applyPreset = (preset: 'this-month' | 'last-7' | 'last-30' | 'all') => {
     if (preset === 'this-month') {
       setFilterMode('month');
-      setSelectedMonth('2026-09');
+      setSelectedMonth(getTodayDateString().substring(0, 7));
     } else if (preset === 'all') {
       setFilterMode('month');
       setSelectedMonth('all');
     } else if (preset === 'last-7') {
       setFilterMode('range');
-      setStartDate('2026-09-10');
-      setEndDate('2026-09-17');
+      setStartDate(shiftDate(getTodayDateString(), -7));
+      setEndDate(getTodayDateString());
     } else if (preset === 'last-30') {
       setFilterMode('range');
-      setStartDate('2026-08-18');
-      setEndDate('2026-09-17');
+      setStartDate(shiftDate(getTodayDateString(), -30));
+      setEndDate(getTodayDateString());
     }
   };
 
@@ -431,7 +434,7 @@ export const RiwayatAbsenKaryawanView: React.FC = () => {
             <button
               onClick={() => {
                 setFilterMode('month');
-                setSelectedMonth('2026-09');
+                setSelectedMonth(getTodayDateString().substring(0, 7));
                 setStatusFilter('all');
                 setSearchQuery('');
               }}
